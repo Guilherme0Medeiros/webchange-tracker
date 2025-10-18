@@ -114,6 +114,46 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
     }
 
     [PostgreSqlFact]
+    public async Task SelectorAndKeywordsKeepUnalertedChangesInHistory()
+    {
+        var now = DateTime.UtcNow;
+        var user = new ApplicationUser { UserName = $"filter-{Guid.NewGuid():N}@example.test" };
+        var monitor = new Monitor { Id = Guid.NewGuid(), UserId = user.Id, Name = "Filtered",
+            Url = "https://example.org", IntervalMinutes = 60, ContentSelector = "main",
+            KeywordsJson = MonitorRules.SerializeKeywords(["launch"]), NextCheckAt = now.AddHours(1),
+            CreatedAt = now, UpdatedAt = now };
+        await using (var db = database.CreateContext())
+        {
+            db.Users.Add(user);
+            db.Monitors.Add(monitor);
+            await db.SaveChangesAsync();
+        }
+        var fetcher = new StubFetcher();
+        await Check("<main>Original</main><aside>Old</aside>");
+        await Check("<main>Original</main><aside>New</aside>");
+        await Check("<main>Changed</main>");
+        await Check("<main>New launch</main>");
+        await Check("<article>Missing main</article>");
+        await using var saved = database.CreateContext();
+        Assert.Equal(3, await saved.Snapshots.CountAsync(x => x.MonitorId == monitor.Id));
+        Assert.Equal(2, await saved.ChangeEvents.CountAsync(x => x.MonitorId == monitor.Id));
+        Assert.Single(await saved.Notifications.Where(x => x.UserId == user.Id).ToListAsync());
+        Assert.Equal("selector_no_match", (await saved.CheckRuns.Where(x => x.MonitorId == monitor.Id)
+            .OrderByDescending(x => x.RequestedAt).FirstAsync()).ErrorCode);
+
+        async Task Check(string html)
+        {
+            fetcher.Result = new PageFetchResult(html, new Uri(monitor.Url), null, HttpStatusCode.OK);
+            await using var db = database.CreateContext();
+            db.CheckRuns.Add(new CheckRun { Id = Guid.NewGuid(), MonitorId = monitor.Id,
+                RequestedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            await new CheckProcessor(db, fetcher, new ContentExtractor(), TimeProvider.System,
+                NormalSchedule).ProcessAsync(default);
+        }
+    }
+
+    [PostgreSqlFact]
     public async Task BaselineIdenticalChangeFailureAndUrlReset()
     {
         var user = new ApplicationUser { UserName = $"checks-{Guid.NewGuid():N}@example.test" };

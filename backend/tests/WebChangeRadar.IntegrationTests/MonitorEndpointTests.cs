@@ -138,7 +138,8 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         builder.ConfigureAppConfiguration((_, configuration) =>
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DefaultConnection"] = database.ConnectionString
+                ["ConnectionStrings:DefaultConnection"] = database.ConnectionString,
+                ["DevelopmentCheckIntervalMinutes"] = ""
             }));
     });
 

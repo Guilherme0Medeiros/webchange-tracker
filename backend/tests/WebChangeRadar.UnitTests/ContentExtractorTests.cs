@@ -8,6 +8,15 @@ public sealed class ContentExtractorTests
     private readonly ContentExtractor extractor = new();
 
     [Fact]
+    public void SelectedContentIgnoresChangesOutsideSelectionAndReportsMissingElement()
+    {
+        Assert.Equal("Current", extractor.ExtractSelected("<main><p>Current</p></main><aside>Old</aside>", "main"));
+        Assert.Equal("Current", extractor.ExtractSelected("<main><p>Current</p></main><aside>New</aside>", "main"));
+        Assert.Null(extractor.ExtractSelected("<main>Current</main>", "#missing"));
+        Assert.False(ContentExtractor.IsValidSelector("["));
+    }
+
+    [Fact]
     public void ExtractsVisibleTextWithBlockAndInlineSeparation()
     {
         var html = "<h1>News</h1><p>Hello <strong>world</strong>!</p><p>Next<br>line</p>";

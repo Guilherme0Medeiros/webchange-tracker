@@ -10,10 +10,31 @@ public enum ContentMode { Text, Html }
 public interface IContentExtractor
 {
     string Extract(string? html, ContentMode mode = ContentMode.Text);
+    string? ExtractSelected(string? html, string selector);
 }
 
 public sealed class ContentExtractor : IContentExtractor
 {
+    public static bool IsValidSelector(string selector)
+    {
+        try { new HtmlParser().ParseDocument("<main></main>").QuerySelectorAll(selector); return true; }
+        catch (Exception ex) when (ex is ArgumentException or AngleSharp.Dom.DomException) { return false; }
+    }
+
+    public string? ExtractSelected(string? html, string selector)
+    {
+        var document = new HtmlParser().ParseDocument(html ?? "");
+        var matches = document.QuerySelectorAll(selector);
+        if (matches.Length == 0) return null;
+        var output = new StringBuilder();
+        foreach (var element in matches)
+        {
+            if (element.Ancestors().OfType<IElement>().Any(ancestor =>
+                    matches.Contains(ancestor) || IsIgnored(ancestor))) continue;
+            AppendText(element, output);
+        }
+        return NormalizeTextOutput(output.ToString());
+    }
     private static readonly HashSet<string> IgnoredElements = new(StringComparer.Ordinal)
     {
         "script", "style", "noscript", "template", "svg", "canvas", "iframe"

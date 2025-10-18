@@ -5,6 +5,15 @@ namespace WebChangeRadar.UnitTests;
 
 public sealed class MonitorRulesTests
 {
+    [Fact]
+    public void KeywordsFilterAlertsWithoutChangingTheText()
+    {
+        var json = WebChangeRadar.Api.Features.Monitors.MonitorRules.SerializeKeywords([" Café ", "café"]);
+        Assert.Single(WebChangeRadar.Api.Features.Monitors.MonitorRules.ReadKeywords(json));
+        Assert.True(WebChangeRadar.Api.Features.Monitors.MonitorRules.ShouldNotify("Novo CAFÉ hoje", json));
+        Assert.False(WebChangeRadar.Api.Features.Monitors.MonitorRules.ShouldNotify("Sem correspondência", json));
+        Assert.True(WebChangeRadar.Api.Features.Monitors.MonitorRules.ShouldNotify("Qualquer mudança", "[]"));
+    }
     [Theory]
     [InlineData(60)]
     [InlineData(360)]

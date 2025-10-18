@@ -53,7 +53,7 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
         return processed;
     }
 
-    private async Task<(Guid Id, Guid Token, string Url, DateTime? ResetAt)?> ClaimAsync(CancellationToken cancellationToken)
+    private async Task<(Guid Id, Guid Token, string Url, string? Selector, DateTime? ResetAt)?> ClaimAsync(CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -71,10 +71,10 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         db.ChangeTracker.Clear(); // The lease may change in another worker during the fetch.
-        return (run.Id, token, monitor.Url, monitor.BaselineResetAt);
+        return (run.Id, token, monitor.Url, monitor.ContentSelector, monitor.BaselineResetAt);
     }
 
-    private async Task ExecuteAsync((Guid Id, Guid Token, string Url, DateTime? ResetAt) claim,
+    private async Task ExecuteAsync((Guid Id, Guid Token, string Url, string? Selector, DateTime? ResetAt) claim,
         CancellationToken cancellationToken)
     {
         PageFetchResult result;
@@ -83,7 +83,8 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
         {
             result = new PageFetchResult(null, null, "fetch_error", null);
         }
-        var text = result.IsSuccess ? extractor.Extract(result.Html) : null;
+        var text = result.IsSuccess ? claim.Selector is null
+            ? extractor.Extract(result.Html) : extractor.ExtractSelected(result.Html, claim.Selector) : null;
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var run = await db.CheckRuns.FromSqlRaw(
             "SELECT * FROM \"CheckRuns\" WHERE \"Id\" = {0} FOR UPDATE", claim.Id)
@@ -97,7 +98,8 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
         run.LeaseToken = null;
         run.LeaseExpiresAt = null;
         run.HttpStatusCode = (int?)result.StatusCode;
-        if (monitor.Url != claim.Url || monitor.BaselineResetAt != claim.ResetAt)
+        if (monitor.Url != claim.Url || monitor.ContentSelector != claim.Selector ||
+            monitor.BaselineResetAt != claim.ResetAt)
         {
             run.Status = "stale";
         }
@@ -105,6 +107,11 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
         {
             run.Status = "failed";
             run.ErrorCode = result.ErrorCode;
+        }
+        else if (text is null)
+        {
+            run.Status = "failed";
+            run.ErrorCode = "selector_no_match";
         }
         else
         {
@@ -124,8 +131,9 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
                     var change = new ChangeEvent { Id = Guid.NewGuid(), MonitorId = run.MonitorId,
                         OldSnapshotId = previous!.Id, NewSnapshotId = snapshot.Id, DetectedAt = now };
                     db.ChangeEvents.Add(change);
-                    db.Notifications.Add(new Notification { Id = Guid.NewGuid(), UserId = monitor.UserId,
-                        ChangeEventId = change.Id, CreatedAt = now });
+                    if (MonitorRules.ShouldNotify(text!, monitor.KeywordsJson))
+                        db.Notifications.Add(new Notification { Id = Guid.NewGuid(), UserId = monitor.UserId,
+                            ChangeEventId = change.Id, CreatedAt = now });
                 }
             }
             if (claim.ResetAt is not null) monitor.BaselineResetAt = null;

@@ -307,6 +307,10 @@ namespace WebChangeRadar.Api.Data.Migrations
                     b.Property<DateTime?>("BaselineResetAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ContentSelector")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -315,6 +319,10 @@ namespace WebChangeRadar.Api.Data.Migrations
 
                     b.Property<int>("IntervalMinutes")
                         .HasColumnType("integer");
+
+                    b.Property<string>("KeywordsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("Name")
                         .IsRequired()

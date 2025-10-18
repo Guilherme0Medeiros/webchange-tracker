@@ -27,6 +27,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.HasKey(monitor => monitor.Id);
             entity.Property(monitor => monitor.Name).HasMaxLength(120).IsRequired();
             entity.Property(monitor => monitor.Url).HasMaxLength(2048).IsRequired();
+            entity.Property(monitor => monitor.ContentSelector).HasMaxLength(160);
+            entity.Property(monitor => monitor.KeywordsJson).HasColumnType("jsonb").IsRequired();
             entity.Property(monitor => monitor.Status).HasMaxLength(16).IsRequired();
             entity.Property(monitor => monitor.UserId).IsRequired();
             entity.Property(monitor => monitor.CreatedAt).IsRequired();

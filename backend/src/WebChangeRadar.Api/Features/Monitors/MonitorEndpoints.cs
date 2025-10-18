@@ -41,17 +41,20 @@ public static class MonitorEndpoints
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
                 m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
-                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt)))
+                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt),
+                m.ContentSelector, m.KeywordsJson))
             .ToListAsync(cancellationToken);
         return Results.Ok(new MonitorPageResponse(items.Select(m => m with
-        { NextCheckAt = schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes) }).ToList(), page, pageSize, totalCount));
+        { NextCheckAt = schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes),
+          Keywords = MonitorRules.ReadKeywords(m.KeywordsJson!) }).ToList(), page, pageSize, totalCount));
     }
 
     private static async Task<IResult> CreateAsync(
         HttpContext http, ApplicationDbContext db, MonitorRequest request, TimeProvider clock, CheckSchedule schedule,
         CancellationToken cancellationToken)
     {
-        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
+        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes,
+            request.ContentSelector, request.Keywords);
         if (errors.Count > 0) return Results.ValidationProblem(errors);
 
         var userId = UserId(http);
@@ -67,6 +70,8 @@ public static class MonitorEndpoints
         var monitor = new Monitor
         {
             Id = Guid.NewGuid(), UserId = userId, Name = request.Name!.Trim(), Url = request.Url!.Trim(),
+            ContentSelector = request.ContentSelector?.Trim() is { Length: > 0 } selector ? selector : null,
+            KeywordsJson = MonitorRules.SerializeKeywords(request.Keywords),
             IntervalMinutes = request.IntervalMinutes, Status = "active",
             NextCheckAt = now, CreatedAt = now, UpdatedAt = now
         };
@@ -83,34 +88,41 @@ public static class MonitorEndpoints
             .Where(m => m.Id == id && m.UserId == UserId(http))
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
                 m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
-                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt)))
+                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt),
+                m.ContentSelector, m.KeywordsJson))
             .SingleOrDefaultAsync(cancellationToken);
         return monitor is null ? NotFound() : Results.Ok(monitor with
-        { NextCheckAt = schedule.NextCheckAt(monitor.NextCheckAt, monitor.IntervalMinutes) });
+        { NextCheckAt = schedule.NextCheckAt(monitor.NextCheckAt, monitor.IntervalMinutes),
+          Keywords = MonitorRules.ReadKeywords(monitor.KeywordsJson!) });
     }
 
     private static async Task<IResult> UpdateAsync(
         HttpContext http, ApplicationDbContext db, Guid id, MonitorRequest request, TimeProvider clock, CheckSchedule schedule,
         CancellationToken cancellationToken)
     {
-        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
+        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes,
+            request.ContentSelector, request.Keywords);
         if (errors.Count > 0) return Results.ValidationProblem(errors);
         var monitor = await OwnedMonitorAsync(db, UserId(http), id, cancellationToken);
         if (monitor is null) return NotFound();
 
         var now = clock.GetUtcNow().UtcDateTime;
         var urlChanged = monitor.Url != request.Url!.Trim();
+        var selector = request.ContentSelector?.Trim() is { Length: > 0 } selected ? selected : null;
+        var selectorChanged = monitor.ContentSelector != selector;
         var intervalChanged = monitor.IntervalMinutes != request.IntervalMinutes;
         monitor.Name = request.Name!.Trim();
         monitor.Url = request.Url.Trim();
+        monitor.ContentSelector = selector;
+        monitor.KeywordsJson = MonitorRules.SerializeKeywords(request.Keywords);
         monitor.IntervalMinutes = request.IntervalMinutes;
-        if (urlChanged)
+        if (urlChanged || selectorChanged)
         {
             monitor.BaselineResetAt = now;
             monitor.CurrentSnapshotId = null;
         }
-        if (monitor.Status == "active" && (urlChanged || intervalChanged))
-            monitor.NextCheckAt = urlChanged ? now : MonitorRules.NextCheckAt(now, request.IntervalMinutes);
+        if (monitor.Status == "active" && (urlChanged || selectorChanged || intervalChanged))
+            monitor.NextCheckAt = urlChanged || selectorChanged ? now : MonitorRules.NextCheckAt(now, request.IntervalMinutes);
         monitor.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
         return Results.Ok(ToResponse(monitor, schedule));
@@ -163,13 +175,17 @@ public static class MonitorEndpoints
     private static string UserId(HttpContext http) => http.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitor not found.");
     private static MonitorResponse ToResponse(Monitor m, CheckSchedule schedule) => new(m.Id, m.Name, m.Url,
-        m.IntervalMinutes, m.Status, schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes), m.CreatedAt, m.UpdatedAt);
+        m.IntervalMinutes, m.Status, schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes), m.CreatedAt, m.UpdatedAt,
+        null, m.ContentSelector, m.KeywordsJson, MonitorRules.ReadKeywords(m.KeywordsJson));
 
-    public sealed record MonitorRequest(string? Name, string? Url, int IntervalMinutes);
+    public sealed record MonitorRequest(string? Name, string? Url, int IntervalMinutes,
+        string? ContentSelector = null, string[]? Keywords = null);
     public sealed record MonitorStatusRequest(string? Status);
     public sealed record MonitorResponse(Guid Id, string Name, string Url, int IntervalMinutes,
         string Status, DateTime? NextCheckAt, DateTime CreatedAt, DateTime UpdatedAt,
-        DateTime? LastCheckedAt = null);
+        DateTime? LastCheckedAt = null, string? ContentSelector = null,
+        [property: System.Text.Json.Serialization.JsonIgnore] string? KeywordsJson = null,
+        string[]? Keywords = null);
     public sealed record MonitorPageResponse(IReadOnlyList<MonitorResponse> Items, int Page,
         int PageSize, int TotalCount);
 }
