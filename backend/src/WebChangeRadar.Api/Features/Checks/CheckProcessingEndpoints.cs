@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using WebChangeRadar.Api.Data;
 using WebChangeRadar.Api.Features.Auth;
+using WebChangeRadar.Api.Features.Notifications;
 
 namespace WebChangeRadar.Api.Features.Checks;
 
@@ -41,7 +42,7 @@ public static class CheckProcessingEndpoints
     }
 
     private static async Task<IResult> ProcessAsync(HttpContext http, IConfiguration configuration,
-        CheckProcessor processor, CancellationToken ct)
+        CheckProcessor processor, EmailOutboxProcessor emailProcessor, CancellationToken ct)
     {
         var configured = configuration["InternalJobs:Token"];
         var supplied = http.Request.Headers.Authorization.ToString();
@@ -49,6 +50,8 @@ public static class CheckProcessingEndpoints
             !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(configured),
                 Encoding.UTF8.GetBytes(supplied[7..])))
             return Results.Unauthorized();
-        return Results.Ok(new { processed = await processor.ProcessAsync(ct) });
+        var processed = await processor.ProcessAsync(ct);
+        var emailsProcessed = await emailProcessor.ProcessAsync(ct);
+        return Results.Ok(new { processed, emailsProcessed });
     }
 }

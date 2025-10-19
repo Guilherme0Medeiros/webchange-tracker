@@ -11,6 +11,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<Snapshot> Snapshots => Set<Snapshot>();
     public DbSet<ChangeEvent> ChangeEvents => Set<ChangeEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -76,6 +77,21 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.HasOne(x => x.ChangeEvent).WithMany().HasForeignKey(x => x.ChangeEventId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => x.ChangeEventId).IsUnique();
             entity.HasIndex(x => new { x.UserId, x.CreatedAt });
+        });
+        builder.Entity<EmailOutbox>(entity =>
+        {
+            entity.ToTable("EmailOutbox", table => table.HasCheckConstraint("CK_EmailOutbox_Status",
+                "\"Status\" IN ('pending', 'sending', 'sent', 'failed')"));
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Recipient).HasMaxLength(254).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.LastErrorCode).HasMaxLength(64);
+            entity.HasOne(x => x.ChangeEvent).WithMany().HasForeignKey(x => x.ChangeEventId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.ChangeEventId).IsUnique();
+            entity.HasIndex(x => new { x.Status, x.NextAttemptAt });
         });
     }
 }

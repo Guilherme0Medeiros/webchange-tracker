@@ -16,7 +16,7 @@ vi.mock("next/navigation", () => ({ useParams: () => ({ id: "m1" }), useRouter: 
 
 const mockedGet = vi.mocked(get);
 const mockedMutate = vi.mocked(mutate);
-const monitor = { id: "m1", name: "Página A", url: "https://example.com", intervalMinutes: 60, contentSelector: null, keywords: [], status: "active" as const, nextCheckAt: null, lastCheckedAt: null, createdAt: "2026-10-15T12:00:00Z", updatedAt: "2026-10-15T12:00:00Z" };
+const monitor = { id: "m1", name: "Página A", url: "https://example.com", intervalMinutes: 60, contentSelector: null, keywords: [], emailAlertsEnabled: false, status: "active" as const, nextCheckAt: null, lastCheckedAt: null, createdAt: "2026-10-15T12:00:00Z", updatedAt: "2026-10-15T12:00:00Z" };
 const page = <T,>(items: T[]) => ({ items, page: 1, pageSize: 10, totalCount: items.length });
 
 function withCache(element: React.ReactElement) {

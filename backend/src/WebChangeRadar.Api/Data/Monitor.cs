@@ -9,6 +9,7 @@ public sealed class Monitor
     public required string Url { get; set; }
     public string? ContentSelector { get; set; }
     public string KeywordsJson { get; set; } = "[]";
+    public bool EmailAlertsEnabled { get; set; }
     public int IntervalMinutes { get; set; }
     public string Status { get; set; } = "active";
     public DateTime? NextCheckAt { get; set; }

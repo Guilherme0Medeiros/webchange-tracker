@@ -43,7 +43,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     options.Lockout.MaxFailedAccessAttempts = 5;
 })
     .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddSignInManager();
+    .AddSignInManager()
+    .AddDefaultTokenProviders();
 
 builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
     .AddCookie(IdentityConstants.ApplicationScheme, options =>
@@ -96,6 +97,8 @@ builder.Services.AddHealthChecks();
 builder.Services.AddPageFetching();
 builder.Services.AddSingleton<IContentExtractor, ContentExtractor>();
 builder.Services.AddScoped<CheckProcessor>();
+builder.Services.AddScoped<EmailOutboxProcessor>();
+builder.Services.AddSingleton<IChangeEmailSender, SmtpChangeEmailSender>();
 builder.Services.AddSingleton<CheckSchedule>();
 
 var app = builder.Build();

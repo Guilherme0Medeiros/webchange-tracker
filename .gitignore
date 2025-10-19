@@ -11,6 +11,7 @@ TestResults/
 # Local settings and secrets
 .env
 .env.*
+.local-emails/
 !.env.example
 **/appsettings.Development.json
 **/appsettings.Local.json

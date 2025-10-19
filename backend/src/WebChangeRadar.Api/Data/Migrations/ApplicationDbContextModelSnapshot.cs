@@ -298,6 +298,63 @@ namespace WebChangeRadar.Api.Data.Migrations
                     b.ToTable("CheckRuns");
                 });
 
+            modelBuilder.Entity("WebChangeRadar.Api.Data.EmailOutbox", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ChangeEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangeEventId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("EmailOutbox", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailOutbox_Status", "\"Status\" IN ('pending', 'sending', 'sent', 'failed')");
+                        });
+                });
+
             modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -316,6 +373,9 @@ namespace WebChangeRadar.Api.Data.Migrations
 
                     b.Property<Guid?>("CurrentSnapshotId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("EmailAlertsEnabled")
+                        .HasColumnType("boolean");
 
                     b.Property<int>("IntervalMinutes")
                         .HasColumnType("integer");
@@ -507,6 +567,25 @@ namespace WebChangeRadar.Api.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Monitor");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.EmailOutbox", b =>
+                {
+                    b.HasOne("WebChangeRadar.Api.Data.ChangeEvent", "ChangeEvent")
+                        .WithMany()
+                        .HasForeignKey("ChangeEventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WebChangeRadar.Api.Data.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChangeEvent");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>

@@ -7,6 +7,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using WebChangeRadar.Api.Services.Extraction;
 using WebChangeRadar.Api.Services.Fetching;
+using WebChangeRadar.Api.Features.Notifications;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Monitor = WebChangeRadar.Api.Data.Monitor;
 
@@ -110,6 +112,77 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
             Assert.Equal("Second owner", (await db.Snapshots.SingleAsync(x => x.MonitorId == monitor.Id)).NormalizedText);
             Assert.Empty(await db.ChangeEvents.Where(x => x.MonitorId == monitor.Id).ToListAsync());
             Assert.Empty(await db.Notifications.Where(x => x.UserId == user.Id).ToListAsync());
+        }
+    }
+
+    [PostgreSqlFact]
+    public async Task ConfirmedOptInQueuesEmailAndRetriesWithoutLosingInternalAlert()
+    {
+        var now = DateTime.UtcNow;
+        var user = new ApplicationUser { UserName = $"email-{Guid.NewGuid():N}@example.test",
+            Email = $"email-{Guid.NewGuid():N}@example.test", EmailConfirmed = true };
+        var monitor = new Monitor { Id = Guid.NewGuid(), UserId = user.Id, Name = "Email",
+            Url = "https://example.org", IntervalMinutes = 60, EmailAlertsEnabled = true,
+            NextCheckAt = now.AddHours(1), CreatedAt = now, UpdatedAt = now };
+        await using (var db = database.CreateContext())
+        {
+            db.Users.Add(user);
+            db.Monitors.Add(monitor);
+            await db.SaveChangesAsync();
+        }
+        await Check("<main>Before</main>");
+        await using (var db = database.CreateContext())
+            Assert.Empty(await db.EmailOutbox.Where(x => x.UserId == user.Id).ToListAsync());
+        await Check("<main>After</main>");
+        var sender = new FakeEmailSender { Fail = true };
+        await using (var db = database.CreateContext())
+        {
+            Assert.Single(await db.Notifications.Where(x => x.UserId == user.Id).ToListAsync());
+            Assert.Single(await db.EmailOutbox.Where(x => x.UserId == user.Id).ToListAsync());
+            Assert.Equal(1, await new EmailOutboxProcessor(db, sender, TimeProvider.System,
+                NullLogger<EmailOutboxProcessor>.Instance).ProcessAsync(default));
+        }
+        await using (var db = database.CreateContext())
+        {
+            var row = await db.EmailOutbox.SingleAsync(x => x.UserId == user.Id);
+            Assert.Equal("pending", row.Status);
+            Assert.Equal(1, row.Attempts);
+            row.NextAttemptAt = DateTime.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+        sender.Fail = false;
+        await using (var db = database.CreateContext())
+            Assert.Equal(1, await new EmailOutboxProcessor(db, sender, TimeProvider.System,
+                NullLogger<EmailOutboxProcessor>.Instance).ProcessAsync(default));
+        await using (var db = database.CreateContext())
+        {
+            Assert.Equal("sent", (await db.EmailOutbox.SingleAsync(x => x.UserId == user.Id)).Status);
+            Assert.Single(sender.Sent);
+            Assert.Equal(0, await new EmailOutboxProcessor(db, sender, TimeProvider.System,
+                NullLogger<EmailOutboxProcessor>.Instance).ProcessAsync(default));
+        }
+        await using (var db = database.CreateContext())
+        {
+            (await db.Users.SingleAsync(x => x.Id == user.Id)).EmailConfirmed = false;
+            await db.SaveChangesAsync();
+        }
+        await Check("<main>Third version</main>");
+        await using (var db = database.CreateContext())
+        {
+            Assert.Equal(2, await db.Notifications.CountAsync(x => x.UserId == user.Id));
+            Assert.Single(await db.EmailOutbox.Where(x => x.UserId == user.Id).ToListAsync());
+        }
+
+        async Task Check(string html)
+        {
+            var fetcher = new StubFetcher { Result = new PageFetchResult(html,
+                new Uri(monitor.Url), null, HttpStatusCode.OK) };
+            await using var db = database.CreateContext();
+            db.CheckRuns.Add(new CheckRun { Id = Guid.NewGuid(), MonitorId = monitor.Id,
+                RequestedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            await new CheckProcessor(db, fetcher, new ContentExtractor(), TimeProvider.System,
+                NormalSchedule).ProcessAsync(default);
         }
     }
 
@@ -224,6 +297,21 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
         public PageFetchResult Result { get; set; } = null!;
         public Task<PageFetchResult> FetchAsync(string url, CancellationToken cancellationToken = default) =>
             Task.FromResult(Result);
+    }
+
+    private sealed class FakeEmailSender : IChangeEmailSender
+    {
+        public bool IsConfigured => true;
+        public bool Fail { get; set; }
+        public List<ChangeEmail> Sent { get; } = [];
+        public Task SendAsync(ChangeEmail email, CancellationToken cancellationToken)
+        {
+            if (Fail) throw new InvalidOperationException("fake failure");
+            Sent.Add(email);
+            return Task.CompletedTask;
+        }
+        public Task SendConfirmationAsync(string recipient, string link, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     private sealed class WaitingFetcher : IPageFetcher

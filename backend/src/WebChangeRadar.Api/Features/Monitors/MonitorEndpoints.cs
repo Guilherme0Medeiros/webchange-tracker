@@ -42,7 +42,7 @@ public static class MonitorEndpoints
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
                 m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
                 db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt),
-                m.ContentSelector, m.KeywordsJson))
+                m.ContentSelector, m.KeywordsJson, null, m.EmailAlertsEnabled))
             .ToListAsync(cancellationToken);
         return Results.Ok(new MonitorPageResponse(items.Select(m => m with
         { NextCheckAt = schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes),
@@ -72,6 +72,7 @@ public static class MonitorEndpoints
             Id = Guid.NewGuid(), UserId = userId, Name = request.Name!.Trim(), Url = request.Url!.Trim(),
             ContentSelector = request.ContentSelector?.Trim() is { Length: > 0 } selector ? selector : null,
             KeywordsJson = MonitorRules.SerializeKeywords(request.Keywords),
+            EmailAlertsEnabled = request.EmailAlertsEnabled ?? false,
             IntervalMinutes = request.IntervalMinutes, Status = "active",
             NextCheckAt = now, CreatedAt = now, UpdatedAt = now
         };
@@ -89,7 +90,7 @@ public static class MonitorEndpoints
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
                 m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
                 db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt),
-                m.ContentSelector, m.KeywordsJson))
+                m.ContentSelector, m.KeywordsJson, null, m.EmailAlertsEnabled))
             .SingleOrDefaultAsync(cancellationToken);
         return monitor is null ? NotFound() : Results.Ok(monitor with
         { NextCheckAt = schedule.NextCheckAt(monitor.NextCheckAt, monitor.IntervalMinutes),
@@ -115,6 +116,7 @@ public static class MonitorEndpoints
         monitor.Url = request.Url.Trim();
         monitor.ContentSelector = selector;
         monitor.KeywordsJson = MonitorRules.SerializeKeywords(request.Keywords);
+        monitor.EmailAlertsEnabled = request.EmailAlertsEnabled ?? monitor.EmailAlertsEnabled;
         monitor.IntervalMinutes = request.IntervalMinutes;
         if (urlChanged || selectorChanged)
         {
@@ -176,16 +178,16 @@ public static class MonitorEndpoints
     private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitor not found.");
     private static MonitorResponse ToResponse(Monitor m, CheckSchedule schedule) => new(m.Id, m.Name, m.Url,
         m.IntervalMinutes, m.Status, schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes), m.CreatedAt, m.UpdatedAt,
-        null, m.ContentSelector, m.KeywordsJson, MonitorRules.ReadKeywords(m.KeywordsJson));
+        null, m.ContentSelector, m.KeywordsJson, MonitorRules.ReadKeywords(m.KeywordsJson), m.EmailAlertsEnabled);
 
     public sealed record MonitorRequest(string? Name, string? Url, int IntervalMinutes,
-        string? ContentSelector = null, string[]? Keywords = null);
+        string? ContentSelector = null, string[]? Keywords = null, bool? EmailAlertsEnabled = null);
     public sealed record MonitorStatusRequest(string? Status);
     public sealed record MonitorResponse(Guid Id, string Name, string Url, int IntervalMinutes,
         string Status, DateTime? NextCheckAt, DateTime CreatedAt, DateTime UpdatedAt,
         DateTime? LastCheckedAt = null, string? ContentSelector = null,
         [property: System.Text.Json.Serialization.JsonIgnore] string? KeywordsJson = null,
-        string[]? Keywords = null);
+        string[]? Keywords = null, bool EmailAlertsEnabled = false);
     public sealed record MonitorPageResponse(IReadOnlyList<MonitorResponse> Items, int Page,
         int PageSize, int TotalCount);
 }

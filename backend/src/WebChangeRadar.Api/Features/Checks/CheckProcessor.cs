@@ -132,8 +132,19 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
                         OldSnapshotId = previous!.Id, NewSnapshotId = snapshot.Id, DetectedAt = now };
                     db.ChangeEvents.Add(change);
                     if (MonitorRules.ShouldNotify(text!, monitor.KeywordsJson))
+                    {
                         db.Notifications.Add(new Notification { Id = Guid.NewGuid(), UserId = monitor.UserId,
                             ChangeEventId = change.Id, CreatedAt = now });
+                        if (monitor.EmailAlertsEnabled)
+                        {
+                            var user = await db.Users.AsNoTracking().SingleAsync(x => x.Id == monitor.UserId,
+                                cancellationToken);
+                            if (user.EmailConfirmed && !string.IsNullOrWhiteSpace(user.Email))
+                                db.EmailOutbox.Add(new EmailOutbox { Id = Guid.NewGuid(), UserId = user.Id,
+                                    ChangeEventId = change.Id, Recipient = user.Email,
+                                    NextAttemptAt = now });
+                        }
+                    }
                 }
             }
             if (claim.ResetAt is not null) monitor.BaselineResetAt = null;
