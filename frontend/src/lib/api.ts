@@ -22,7 +22,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const validation = problem.errors && Object.values(problem.errors).flat().join(" ");
     throw new ApiError(response.status, validation || problem.detail || problem.title || `Erro HTTP ${response.status}`);
   }
-  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  if (response.status === 204) return undefined as T;
+  const body = await response.text();
+  return body ? JSON.parse(body) as T : undefined as T;
 }
 
 export const get = <T>(path: string) => request<T>(path);
