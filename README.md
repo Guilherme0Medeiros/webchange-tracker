@@ -1,11 +1,11 @@
 # WebChange Radar
 
-Aplicação para acompanhar alterações no texto de páginas públicas. O back-end usa ASP.NET Core em .NET 10, PostgreSQL e Entity Framework Core. O produto completo está especificado em [docs/MVP.md](docs/MVP.md).
+Aplicação para acompanhar alterações no texto de páginas públicas, com histórico, comparação e alertas internos ou por e-mail. Usa ASP.NET Core em .NET 10, PostgreSQL, Entity Framework Core e Next.js. O escopo atual está em [docs/V1.md](docs/V1.md); [docs/MVP.md](docs/MVP.md) registra as decisões do MVP.
 
 ## Estrutura
 
 - `backend/src/WebChangeRadar.Api`: API e módulos por funcionalidade.
-- `backend/tests/WebChangeRadar.UnitTests`: testes unitários para as regras de negócio das próximas etapas.
+- `backend/tests/WebChangeRadar.UnitTests`: testes unitários das regras de negócio.
 - `backend/tests/WebChangeRadar.IntegrationTests`: testes HTTP com `WebApplicationFactory`.
 - `frontend`: interface Next.js, TypeScript, Tailwind CSS e componentes shadcn/ui.
 - `docs/PROGRESS.md`: progresso da implementação.
@@ -49,7 +49,7 @@ Acesse a URL HTTPS impressa pelo Next.js, normalmente `https://localhost:3000` (
 
 O arquivo `frontend/certificates/api-dev.pem` contém apenas o certificado público da API e é ignorado pelo Git; não inclua a chave privada.
 
-O frontend oferece cadastro, login, dashboard, gestão de monitoramentos, verificações manuais, histórico, comparação e notificações. Verificações manuais são enfileiradas; o resultado depende da chamada periódica ao endpoint interno documentado abaixo. Para verificar o frontend, execute em `frontend`: `npm run typecheck`, `npm run lint` e `npm run build`.
+O frontend oferece cadastro, login, dashboard, gestão de monitoramentos, verificações manuais, histórico, comparação e notificações. Dados do painel e das notificações são atualizados a cada 30 segundos enquanto a aba está visível, ao retornar a ela e pelo botão **Atualizar**. Essa atualização consulta a API; não coleta páginas externas. Verificações manuais são enfileiradas; o resultado depende da chamada periódica ao endpoint interno documentado abaixo. Para verificar o frontend, execute em `frontend`: `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd test` e `npm.cmd run build` no PowerShell, ou `npm run ...` em outros shells.
 
 Como alternativa ao PostgreSQL instalado no Windows, `docker compose up -d` inicia o PostgreSQL em contêiner e cria os dois bancos na primeira inicialização do volume. Escolha uma porta livre em `POSTGRES_PORT` se já houver um servidor local em 5432. Um volume antigo não executa novamente o script de criação do banco de testes.
 
@@ -61,15 +61,15 @@ Os testes PostgreSQL usam `WEBCHANGE_TEST_CONNECTION`, carregada do ambiente ou 
 
 As rotas ficam sob `/api/auth`: `POST /register`, `POST /login`, `POST /logout` e `GET /me`. Cadastro cria a conta e inicia a sessão. `/me` e `/logout` exigem autenticação. Identity gerencia hashes de senha e bloqueio temporário após tentativas incorretas. Login e cadastro têm limite de dez requisições por minuto por IP.
 
-A interface futura deve acessar a API por **mesma origem**, via proxy, usando HTTPS. Antes de cada `POST`, faça `GET /api/auth/csrf` e envie o `requestToken` recebido no cabeçalho `X-CSRF-TOKEN`. Após cadastro, login ou logout, obtenha um novo token. Os cookies de sessão e CSRF são `Secure`, `HttpOnly` e `SameSite=Strict`; o JavaScript não precisa lê-los. O navegador envia os cookies automaticamente nas requisições da mesma origem.
+A interface acessa a API por **mesma origem**, via proxy, usando HTTPS. Antes de cada escrita, faça `GET /api/auth/csrf` e envie o `requestToken` recebido no cabeçalho `X-CSRF-TOKEN`. Após cadastro, login ou logout, obtenha um novo token. Os cookies de sessão e CSRF são `Secure`, `HttpOnly` e `SameSite=Strict`; o JavaScript não precisa lê-los. O navegador envia os cookies automaticamente nas requisições da mesma origem.
 
 Para uma implantação com várias instâncias, será necessário compartilhar as chaves de Data Protection que assinam os cookies. A configuração de produção ainda não faz parte desta etapa.
 
 ## Monitoramentos
 
-As rotas autenticadas em `/api/monitors` permitem criar, listar, consultar, editar e excluir monitoramentos. `PATCH /api/monitors/{id}/status` recebe `{"status":"paused"}` ou `{"status":"active"}`. Criação e edição recebem `name`, `url` e `intervalMinutes` (60, 360 ou 1440). Há no máximo três monitoramentos por usuário. Escritas exigem o cabeçalho CSRF descrito acima.
+As rotas autenticadas em `/api/monitors` permitem criar, listar, consultar, editar e excluir monitoramentos. `PATCH /api/monitors/{id}/status` recebe `{"status":"paused"}` ou `{"status":"active"}`. Criação e edição recebem `name`, `url` e `intervalMinutes` (60, 360 ou 1440), além dos campos opcionais `contentSelector`, `keywords` (até dez expressões de até 60 caracteres) e `emailAlertsEnabled`. Há no máximo três monitoramentos por usuário. Escritas exigem o cabeçalho CSRF descrito acima.
 
-A listagem aceita `status=active|paused`, `page` (a partir de 1) e `pageSize` (1 a 100, padrão 20). Retorna `items`, `page`, `pageSize` e `totalCount`. O monitor novo começa ativo e disponível para a primeira verificação imediatamente. Alterar a URL marca a necessidade de uma nova linha de base e antecipa a próxima verificação; alterar somente o intervalo a agenda a partir da atualização. Ao pausar, `nextCheckAt` fica nulo; reativar agenda uma verificação imediata.
+A listagem aceita `status=active|paused`, `page` (a partir de 1) e `pageSize` (1 a 100, padrão 20). Retorna `items`, `page`, `pageSize` e `totalCount`. O monitor novo começa ativo e disponível para a primeira verificação imediatamente. Alterar a URL ou o seletor marca uma nova linha de base e antecipa a próxima verificação; alterar somente o intervalo a agenda a partir da atualização. Ao pausar, `nextCheckAt` fica nulo; reativar agenda uma verificação imediata. O histórico anterior é preservado.
 
 Os contratos HTTP usam DTOs (`MonitorRequest` e `MonitorResponse`) para não expor diretamente a entidade do EF Core. `TimeProvider` fornece o horário UTC para agendamento e facilita testes determinísticos. Uma transação com bloqueio da linha do usuário mantém o limite de três monitores mesmo com criações simultâneas.
 
@@ -83,4 +83,34 @@ Em um futuro deploy, crie **um** job HTTP com cron `* * * * *`, método `POST` e
 
 `POST /api/monitors/{id}/checks` enfileira uma verificação manual e retorna `202 Accepted`; exige sessão e CSRF e monitor ativo. O intervalo mínimo entre pedidos manuais é configurado por `ManualCheckCooldownMinutes`, com padrão de cinco minutos. Em `Development`, defina `ManualCheckCooldownMinutes=0` no `.env` para permitir pedidos consecutivos; fora de `Development`, o mínimo continua sendo cinco minutos. `GET /api/monitors/{id}/checks` e `GET /api/monitors/{id}/changes` oferecem histórico paginado com filtros `from` e `to` em UTC; o histórico de verificações também aceita `result`. `GET /api/changes/{id}` retorna textos anterior/novo e trechos removidos/incluídos. `GET /api/dashboard` retorna contadores. `GET /api/notifications` lista alertas paginados, com filtro opcional `unread`; `PATCH /api/notifications/{id}/read` marca um alerta como lido e exige CSRF. Todos esses dados são filtrados pelo usuário autenticado.
 
-A primeira leitura bem-sucedida cria o baseline. Leituras com texto normalizado idêntico não geram outra versão. Uma alteração cria snapshot, evento e notificação na mesma transação. Alterar a URL inicia novo baseline e preserva o histórico anterior. A limpeza por retenção permanece para uma etapa posterior, conforme permitido pelo MVP.
+A primeira leitura bem-sucedida cria o baseline. Leituras com texto normalizado idêntico não geram outra versão. Uma alteração cria snapshot e evento na mesma transação, com alerta interno somente se o filtro de palavras-chave corresponder. Alterar a URL ou o seletor inicia novo baseline e preserva o histórico anterior. A limpeza por retenção permanece para uma etapa posterior.
+
+## Seletor CSS e palavras-chave
+
+O campo **Seletor CSS** aceita, por exemplo, `main`, `.noticias` ou `#avisos`. Apenas o texto visível dos elementos encontrados entra no hash e no diff. Uma área sem correspondência registra `selector_no_match` na verificação, sem criar snapshot vazio ou alerta falso. Mudanças fora da área selecionada não alteram o histórico. Um seletor inválido é rejeitado ao salvar. Trocar o seletor redefine o baseline; trocar somente as palavras-chave não o redefine.
+
+As palavras-chave são expressões separadas por linha ou vírgula no formulário. Sem elas, toda mudança real gera alerta. Com elas, uma mudança gera alerta se o **novo texto monitorado** contém qualquer expressão, sem diferenciar maiúsculas e minúsculas. O termo pode já estar presente em uma parte que não mudou. Mudanças que não correspondem ainda aparecem no histórico e no diff.
+
+## Alertas por e-mail
+
+Ative **Alertas por e-mail** no monitor. Apenas mudanças reais que passam pelo filtro de palavras-chave geram um pedido de envio. O endereço de destino é o e-mail confirmado da conta; baseline, falhas e contas sem confirmação não geram e-mail. O pedido entra na tabela `EmailOutbox` na mesma transação do evento. O endpoint central processa depois até dez entregas por chamada, com claim concorrente, lease, até cinco tentativas e backoff. Pedidos pendentes por mais de 24 horas expiram, evitando envio tardio após longa indisponibilidade. Os estados `pending`, `sending`, `sent` e `failed` ficam no banco; o painel de notificações mostra pendências e falhas da conta. Falhas de entrega não removem a notificação interna. Uma chave única por alteração evita dois pedidos lógicos, mas o protocolo SMTP não garante entrega exatamente uma vez após uma interrupção entre envio e gravação de `sent`.
+
+Sem configuração de e-mail, a API continua funcionando e o canal aparece como indisponível. Para testar sem enviar mensagens reais, acrescente ao `.env` em `Development`:
+
+```dotenv
+Email__Mode=File
+Email__FileDirectory=.local-emails
+Email__PublicBaseUrl=https://localhost:3000
+```
+
+Reinicie a API, cadastre-se e, no formulário de monitor, clique em **Enviar confirmação**. Abra o arquivo novo em `.local-emails` e visite o link de confirmação. Ative os alertas no monitor, faça uma leitura inicial e altere uma página HTML pública sob seu controle. `localhost` e IPs privados são bloqueados pela proteção SSRF. Após `powershell -NoProfile -ExecutionPolicy Bypass -File ./dev.ps1 -Once` ou a próxima rodada do scheduler, confira a notificação interna e o novo arquivo de e-mail. O arquivo de sandbox é ignorado pelo Git e pode conter o endereço da conta e a URL monitorada.
+
+Para SMTP real, defina `Email__Mode=Smtp`, `Email__Host`, `Email__Port`, `Email__From`, `Email__Username`, `Email__Password` e `Email__PublicBaseUrl` (origem HTTPS do frontend), com segredos apenas no ambiente ou secret manager. O envio usa TLS. Não há provedor contratado ou entrega real habilitada neste repositório. Revise verificação de domínio, limites do provedor e prevenção de abuso antes de permitir cadastros públicos.
+
+## Validação e publicação
+
+Os testes do backend usam fakes de rede e PostgreSQL separado; execute `dotnet test WebChangeRadar.slnx`. No frontend, execute `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd test` e `npm.cmd run build` no PowerShell. Há workflows para backend e frontend, mas a execução remota do CI precisa ser verificada no GitHub após push autorizado.
+
+Para validação manual, use uma página HTML pública de teste sob seu controle: crie o monitor com seletor `main` e palavra-chave `lançamento`; rode a primeira checagem, altere apenas um `aside` e confirme que não há mudança; altere o texto de `main` sem o termo e confirme histórico sem alerta; altere `main` incluindo o termo e confirme alerta. A lista e as notificações devem se atualizar em até cerca de 30 segundos com a aba visível ou ao clicar **Atualizar**. Um monitor vencido exibe **aguardando verificação** até a conclusão real. O scheduler local continua sendo único, a cada minuto, e respeita a frequência de cada monitor. Em 30 dias, um job externo por minuto representa aproximadamente 43.200 invocações para todos os usuários juntos; as coletas HTTP são consumo adicional.
+
+O deploy permanece pendente: validar uma hospedagem que execute o servidor Next.js com proxy de mesma origem, configurar Data Protection compartilhado, adaptar autenticação OIDC do endpoint interno para Cloud Scheduler/Cloud Run, definir banco gerenciado, retenção e rollback, e conferir preços e cotas atuais. Não há infraestrutura publicada nem recursos pagos ativados.

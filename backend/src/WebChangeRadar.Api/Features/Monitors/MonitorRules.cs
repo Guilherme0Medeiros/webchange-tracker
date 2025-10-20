@@ -13,7 +13,7 @@ public static class MonitorRules
         string? contentSelector = null, string[]? keywords = null)
     {
         var errors = new Dictionary<string, string[]>();
-        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 120)
+        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 120 || name.Any(char.IsControl))
             errors["name"] = ["Name must contain 1 to 120 characters."];
 
         if (!PublicUrlGuard.TryParse(url, out _))
@@ -35,9 +35,12 @@ public static class MonitorRules
 
     public static string SerializeKeywords(string[]? keywords) => JsonSerializer.Serialize(NormalizeKeywords(keywords));
     public static string[] ReadKeywords(string json) => JsonSerializer.Deserialize<string[]>(json) ?? [];
-    public static bool ShouldNotify(string text, string keywordsJson) =>
-        ReadKeywords(keywordsJson).All(x => x.Length == 0) ||
-        ReadKeywords(keywordsJson).Any(x => text.Contains(x, StringComparison.OrdinalIgnoreCase));
+    public static bool ShouldNotify(string text, string keywordsJson)
+    {
+        var keywords = ReadKeywords(keywordsJson);
+        return keywords.Length == 0 ||
+            keywords.Any(x => text.Contains(x, StringComparison.OrdinalIgnoreCase));
+    }
 
     public static DateTime NextCheckAt(DateTime now, int intervalMinutes) => now.AddMinutes(intervalMinutes);
 

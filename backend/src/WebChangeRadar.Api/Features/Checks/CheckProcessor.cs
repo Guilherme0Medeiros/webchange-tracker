@@ -8,7 +8,8 @@ using WebChangeRadar.Api.Services.Fetching;
 namespace WebChangeRadar.Api.Features.Checks;
 
 public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher,
-    IContentExtractor extractor, TimeProvider clock, CheckSchedule schedule)
+    IContentExtractor extractor, TimeProvider clock, CheckSchedule schedule,
+    ILogger<CheckProcessor>? logger = null)
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     private const int BatchSize = 10;
@@ -153,5 +154,7 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
             monitor.NextCheckAt = now.AddMinutes(monitor.IntervalMinutes);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        logger?.LogInformation("Check completed: MonitorId {MonitorId}, CheckRunId {CheckRunId}, Status {Status}, ErrorCode {ErrorCode}, DurationMs {DurationMs}",
+            monitor.Id, run.Id, run.Status, run.ErrorCode, (now - run.StartedAt!.Value).TotalMilliseconds);
     }
 }

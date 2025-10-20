@@ -35,7 +35,7 @@ public sealed class SmtpChangeEmailSender(IConfiguration configuration, IHostEnv
         if (!IsConfigured) throw new InvalidOperationException("email_not_configured");
         var link = new Uri(new Uri(configuration["Email:PublicBaseUrl"]!),
             $"/changes/{email.ChangeId}").ToString();
-        var subject = $"Mudança detectada: {email.MonitorName}";
+        var subject = $"Mudança detectada: {email.MonitorName.Replace('\r', ' ').Replace('\n', ' ')}";
         var plain = $"Mudança detectada em {email.MonitorName}\nURL: {email.Url}\n" +
             $"Detectada em: {email.DetectedAt:u}\nDetalhes: {link}";
         var html = $"<p>Mudança detectada em {WebUtility.HtmlEncode(email.MonitorName)}</p>" +
@@ -112,6 +112,10 @@ public sealed class EmailOutboxProcessor(ApplicationDbContext db, IChangeEmailSe
 
     public async Task<int> ProcessAsync(CancellationToken cancellationToken)
     {
+        var expiration = clock.GetUtcNow().UtcDateTime.AddDays(-1);
+        await db.EmailOutbox.Where(x => x.Status == "pending" && x.NextAttemptAt < expiration)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.Status, "failed")
+                .SetProperty(x => x.LastErrorCode, "expired"), cancellationToken);
         if (!sender.IsConfigured) return 0;
         var processed = 0;
         for (var i = 0; i < BatchSize; i++)
@@ -196,5 +200,7 @@ public sealed class EmailOutboxProcessor(ApplicationDbContext db, IChangeEmailSe
         }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        logger.LogInformation("Email attempt completed: ChangeEventId {ChangeEventId}, Status {Status}, Attempts {Attempts}, ErrorCode {ErrorCode}",
+            row.ChangeEventId, row.Status, row.Attempts, row.LastErrorCode);
     }
 }

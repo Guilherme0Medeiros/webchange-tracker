@@ -44,6 +44,7 @@ public sealed class MonitorRulesTests
     {
         Assert.Contains("name", MonitorRules.Validate("  ", "https://example.org", 60).Keys);
         Assert.Contains("name", MonitorRules.Validate(new string('a', 121), "https://example.org", 60).Keys);
+        Assert.Contains("name", MonitorRules.Validate("Bad\r\nSubject", "https://example.org", 60).Keys);
     }
 
     [Fact]

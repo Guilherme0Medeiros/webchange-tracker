@@ -110,6 +110,36 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
     }
 
     [PostgreSqlFact]
+    public async Task ChangingSelectorStartsNewBaselineAndKeepsPriorSnapshot()
+    {
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        await RegisterAsync(client);
+        var monitor = await CreateMonitorAsync(client, "Selected", "https://example.org/page", 60);
+        var id = monitor.GetProperty("id").GetGuid();
+        var snapshotId = Guid.NewGuid();
+        await using (var db = database.CreateContext())
+        {
+            db.Snapshots.Add(new WebChangeRadar.Api.Data.Snapshot { Id = snapshotId, MonitorId = id,
+                ContentHash = new string('a', 64), NormalizedText = "Earlier", CapturedAt = DateTime.UtcNow });
+            (await db.Monitors.SingleAsync(x => x.Id == id)).CurrentSnapshotId = snapshotId;
+            await db.SaveChangesAsync();
+        }
+        using var response = await SendWithCsrfAsync(client, HttpMethod.Put, $"/api/monitors/{id}",
+            new { name = "Selected", url = "https://example.org/page", intervalMinutes = 60,
+                contentSelector = "main", keywords = new[] { "launch" } });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("main", body.GetProperty("contentSelector").GetString());
+        Assert.Equal("launch", body.GetProperty("keywords")[0].GetString());
+        await using var saved = database.CreateContext();
+        var updated = await saved.Monitors.SingleAsync(x => x.Id == id);
+        Assert.Null(updated.CurrentSnapshotId);
+        Assert.NotNull(updated.BaselineResetAt);
+        Assert.True(await saved.Snapshots.AnyAsync(x => x.Id == snapshotId));
+    }
+
+    [PostgreSqlFact]
     public async Task ValidatesInputPagingAndCsrf()
     {
         using var factory = CreateFactory();
