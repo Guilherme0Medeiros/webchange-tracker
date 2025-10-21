@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -63,10 +64,62 @@ public sealed class EmailEndpointTests(PostgreSqlFixture database, WebApplicatio
         request.Headers.Add("X-CSRF-TOKEN", token);
         Assert.Equal(HttpStatusCode.Accepted, (await client.SendAsync(request)).StatusCode);
         Assert.NotNull(sender.ConfirmationLink);
+        var confirmationPath = new Uri(sender.ConfirmationLink!).PathAndQuery;
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync("/api/notifications/confirm-email?userId=missing&token=invalid")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync(confirmationPath + "invalid")).StatusCode);
         Assert.Equal(HttpStatusCode.Redirect,
-            (await client.GetAsync(new Uri(sender.ConfirmationLink!).PathAndQuery)).StatusCode);
+            (await client.GetAsync(confirmationPath)).StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect,
+            (await client.GetAsync(confirmationPath)).StatusCode);
         var after = await client.GetFromJsonAsync<JsonElement>("/api/notifications/email-status");
         Assert.True(after.GetProperty("confirmed").GetBoolean());
+    }
+
+    [PostgreSqlFact]
+    public async Task ExpiredConfirmationTokenIsRejected()
+    {
+        var sender = new FakeSender();
+        using var factory = baseFactory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureLogging(logging => logging.ClearProviders());
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+                services.Configure<DataProtectionTokenProviderOptions>(options =>
+                    options.TokenLifespan = TimeSpan.FromTicks(-1));
+                services.Replace(ServiceDescriptor.Singleton<IChangeEmailSender>(sender));
+            });
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:DefaultConnection"] = database.ConnectionString,
+                    ["Email:PublicBaseUrl"] = "https://localhost"
+                }));
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false
+        });
+        var csrf = await client.GetFromJsonAsync<JsonElement>("/api/auth/csrf");
+        using var register = new HttpRequestMessage(HttpMethod.Post, "/api/auth/register")
+        {
+            Content = JsonContent.Create(new { email = $"expired-{Guid.NewGuid():N}@example.test",
+                password = "SecurePassword123!" })
+        };
+        register.Headers.Add("X-CSRF-TOKEN", csrf.GetProperty("requestToken").GetString()!);
+        Assert.Equal(HttpStatusCode.Created, (await client.SendAsync(register)).StatusCode);
+        csrf = await client.GetFromJsonAsync<JsonElement>("/api/auth/csrf");
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "/api/notifications/request-email-confirmation");
+        request.Headers.Add("X-CSRF-TOKEN", csrf.GetProperty("requestToken").GetString()!);
+        Assert.Equal(HttpStatusCode.Accepted, (await client.SendAsync(request)).StatusCode);
+        Assert.NotNull(sender.ConfirmationLink);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync(new Uri(sender.ConfirmationLink!).PathAndQuery)).StatusCode);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/notifications/email-status");
+        Assert.False(status.GetProperty("confirmed").GetBoolean());
     }
 
     private sealed class FakeSender : IChangeEmailSender
