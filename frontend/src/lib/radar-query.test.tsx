@@ -6,7 +6,7 @@ import DashboardPage from "@/app/(app)/dashboard/page";
 import MonitorPage from "@/app/(app)/monitors/[id]/page";
 import NotificationsPage from "@/app/(app)/notifications/page";
 import { MonitorForm } from "@/components/monitor-form";
-import { get, mutate } from "@/lib/api";
+import { ApiError, get, mutate } from "@/lib/api";
 
 vi.mock("@/lib/api", async importOriginal => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -62,6 +62,17 @@ describe("automatic refresh", () => {
     expect(screen.getByText("1")).toBeTruthy();
   });
 
+  it("stops polling after the last subscriber unmounts", async () => {
+    mockedGet.mockResolvedValue({ count: 1 });
+    vi.useFakeTimers();
+    const view = withCache(<Probe />);
+    await act(async () => { await Promise.resolve(); });
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes dashboard data with the button without navigating", async () => {
     mockedGet.mockImplementation(async path => path === "/dashboard" ? { activeMonitors: 1, checks: 0, changes: 0, failures: 0 } : page([monitor]));
     withCache(<DashboardPage />);
@@ -104,6 +115,38 @@ describe("automatic refresh", () => {
     fireEvent.submit(screen.getByRole("button", { name: editing ? "Salvar alterações" : "Criar monitoramento" }).closest("form")!);
     await waitFor(() => expect(mockedMutate).toHaveBeenCalledWith(editing ? "/monitors/m1" : "/monitors", editing ? "PUT" : "POST", expect.any(Object)));
     await waitFor(() => expect(mockedGet.mock.calls.some(([path]) => path === "/dashboard")).toBe(true));
+  });
+
+  it("submits selector, normalized keywords and email preference on edit", async () => {
+    mockedGet.mockResolvedValue({ available: true, confirmed: true, pending: 0, failed: 0 });
+    mockedMutate.mockResolvedValue(monitor);
+    withCache(<MonitorForm monitor={monitor} />);
+    fireEvent.change(screen.getByLabelText("Seletor CSS (opcional)"), { target: { value: "  main .content  " } });
+    fireEvent.change(screen.getByLabelText(/^Palavras-chave para alertas \(opcional\)/), { target: { value: " ALERTA,  lançamento\n\n urgente " } });
+    fireEvent.click(screen.getByLabelText("Alertas por e-mail"));
+    fireEvent.submit(screen.getByRole("button", { name: "Salvar alterações" }).closest("form")!);
+    await waitFor(() => expect(mockedMutate).toHaveBeenCalledWith("/monitors/m1", "PUT", expect.objectContaining({
+      contentSelector: "main .content", keywords: ["ALERTA", "lançamento", "urgente"], emailAlertsEnabled: true,
+    })));
+  });
+
+  it("shows API validation errors and keeps the form available", async () => {
+    mockedGet.mockResolvedValue({ available: true, confirmed: true, pending: 0, failed: 0 });
+    mockedMutate.mockRejectedValue(new ApiError(400, "Seletor CSS inválido."));
+    withCache(<MonitorForm monitor={monitor} />);
+    fireEvent.change(screen.getByLabelText("Seletor CSS (opcional)"), { target: { value: "main[" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Salvar alterações" }).closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Seletor CSS inválido.");
+    expect(screen.getByRole("button", { name: "Salvar alterações" })).toHaveProperty("disabled", false);
+  });
+
+  it("accepts an empty confirmation response and updates the button", async () => {
+    mockedGet.mockResolvedValue({ available: true, confirmed: false, pending: 0, failed: 0 });
+    mockedMutate.mockResolvedValue(undefined);
+    withCache(<MonitorForm monitor={monitor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enviar confirmação" }));
+    await screen.findByRole("button", { name: "Mensagem solicitada" });
+    expect(mockedMutate).toHaveBeenCalledWith("/notifications/request-email-confirmation", "POST");
   });
 
   it("updates the status after pausing a monitor", async () => {

@@ -21,6 +21,47 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
         { EnvironmentName = Environments.Production }).Environment);
 
     [PostgreSqlFact]
+    public async Task SchedulerSkipsPausedAndFutureMonitorsUntilReactivatedAndDue()
+    {
+        var now = DateTime.UtcNow;
+        var user = new ApplicationUser { UserName = $"schedule-{Guid.NewGuid():N}@example.test" };
+        var paused = new Monitor { Id = Guid.NewGuid(), UserId = user.Id, Name = "Paused",
+            Url = "https://example.org/paused", IntervalMinutes = 60, Status = "paused",
+            NextCheckAt = now.AddMinutes(-1), CreatedAt = now, UpdatedAt = now };
+        var future = new Monitor { Id = Guid.NewGuid(), UserId = user.Id, Name = "Future",
+            Url = "https://example.org/future", IntervalMinutes = 60, Status = "active",
+            NextCheckAt = now.AddHours(1), CreatedAt = now, UpdatedAt = now };
+        await using (var db = database.CreateContext())
+        {
+            db.Users.Add(user);
+            db.Monitors.AddRange(paused, future);
+            await db.SaveChangesAsync();
+        }
+        var fetcher = new StubFetcher { Result = new PageFetchResult("<p>First</p>",
+            new Uri(paused.Url), null, HttpStatusCode.OK) };
+        await using (var db = database.CreateContext())
+        {
+            Assert.Equal(0, await new CheckProcessor(db, fetcher, new ContentExtractor(),
+                TimeProvider.System, NormalSchedule).ProcessAsync(default));
+            Assert.Empty(await db.CheckRuns.Where(x => x.MonitorId == paused.Id || x.MonitorId == future.Id).ToListAsync());
+        }
+        await using (var db = database.CreateContext())
+        {
+            var monitor = await db.Monitors.SingleAsync(x => x.Id == paused.Id);
+            monitor.Status = "active";
+            monitor.NextCheckAt = DateTime.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+        await using (var db = database.CreateContext())
+            Assert.Equal(1, await new CheckProcessor(db, fetcher, new ContentExtractor(),
+                TimeProvider.System, NormalSchedule).ProcessAsync(default));
+        await using var saved = database.CreateContext();
+        Assert.Single(await saved.CheckRuns.Where(x => x.MonitorId == paused.Id).ToListAsync());
+        Assert.Empty(await saved.CheckRuns.Where(x => x.MonitorId == future.Id).ToListAsync());
+        Assert.Equal("First", (await saved.Snapshots.SingleAsync(x => x.MonitorId == paused.Id)).NormalizedText);
+    }
+
+    [PostgreSqlFact]
     public async Task DevelopmentIntervalMakesExistingMonitorDueAndRegularScheduleRestores()
     {
         var now = DateTime.UtcNow;
