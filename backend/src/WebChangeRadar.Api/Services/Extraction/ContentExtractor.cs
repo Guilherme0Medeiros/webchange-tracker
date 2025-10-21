@@ -31,9 +31,11 @@ public sealed class ContentExtractor : IContentExtractor
         {
             if (element.Ancestors().OfType<IElement>().Any(ancestor =>
                     matches.Contains(ancestor) || IsIgnored(ancestor))) continue;
+            if (output.Length > 0) output.Append('\n');
             AppendText(element, output);
         }
-        return NormalizeTextOutput(output.ToString());
+        var result = NormalizeTextOutput(output.ToString());
+        return result.Length == 0 ? null : result;
     }
     private static readonly HashSet<string> IgnoredElements = new(StringComparer.Ordinal)
     {

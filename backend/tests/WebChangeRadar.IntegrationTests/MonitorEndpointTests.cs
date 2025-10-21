@@ -137,6 +137,18 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         Assert.Null(updated.CurrentSnapshotId);
         Assert.NotNull(updated.BaselineResetAt);
         Assert.True(await saved.Snapshots.AnyAsync(x => x.Id == snapshotId));
+        updated.CurrentSnapshotId = snapshotId;
+        await saved.SaveChangesAsync();
+
+        using var keywordOnly = await SendWithCsrfAsync(client, HttpMethod.Put, $"/api/monitors/{id}",
+            new { name = "Selected", url = "https://example.org/page", intervalMinutes = 60,
+                contentSelector = "main", keywords = new[] { "ALERTA", " alerta " }, emailAlertsEnabled = true });
+        Assert.Equal(HttpStatusCode.OK, keywordOnly.StatusCode);
+        var keywordResponse = await keywordOnly.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Single(keywordResponse.GetProperty("keywords").EnumerateArray());
+        Assert.True(keywordResponse.GetProperty("emailAlertsEnabled").GetBoolean());
+        await using var keywordDb = database.CreateContext();
+        Assert.Equal(snapshotId, (await keywordDb.Monitors.SingleAsync(x => x.Id == id)).CurrentSnapshotId);
     }
 
     [PostgreSqlFact]
@@ -152,6 +164,13 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         Assert.True(errors.TryGetProperty("name", out _));
         Assert.True(errors.TryGetProperty("url", out _));
         Assert.True(errors.TryGetProperty("intervalMinutes", out _));
+        using var invalidSelector = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/monitors",
+            new { name = "Valid", url = "https://example.org", intervalMinutes = 60,
+                contentSelector = "main[", keywords = Enumerable.Range(0, 11).Select(x => $"word{x}").ToArray() });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidSelector.StatusCode);
+        var selectorErrors = (await invalidSelector.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors");
+        Assert.True(selectorErrors.TryGetProperty("contentSelector", out _));
+        Assert.True(selectorErrors.TryGetProperty("keywords", out _));
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?page=0")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?pageSize=101")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?status=unknown")).StatusCode);

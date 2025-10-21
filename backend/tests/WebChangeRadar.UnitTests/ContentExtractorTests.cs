@@ -17,6 +17,30 @@ public sealed class ContentExtractorTests
     }
 
     [Fact]
+    public void ComplexSelectorsAndMultipleMatchesKeepSelectedValuesSeparate()
+    {
+        const string html = "<main><div class='content'><span class='item'>Alpha</span>" +
+            "<span class='item'>Beta</span></div></main><p id='status'>Ready</p>";
+        Assert.Equal("Alpha\nBeta", extractor.ExtractSelected(html, "main .content .item"));
+        Assert.Equal("Ready", extractor.ExtractSelected(html, "#status"));
+        Assert.Equal("AlphaBeta", extractor.ExtractSelected(html, "main .content"));
+    }
+
+    [Fact]
+    public void HiddenOrEmptySelectionDoesNotReplaceExistingContentWithEmptySnapshot()
+    {
+        Assert.Null(extractor.ExtractSelected("<main hidden><h1>Hidden</h1></main>", "h1"));
+        Assert.Null(extractor.ExtractSelected("<main><h1></h1></main>", "h1"));
+    }
+
+    [Fact]
+    public void EquivalentSelectedTextNormalizesWhitespaceAndUnicode()
+    {
+        Assert.Equal(extractor.ExtractSelected("<h1>Caf\u00e9 alert</h1>", "h1"),
+            extractor.ExtractSelected("<h1> Cafe\u0301   alert </h1>", "h1"));
+    }
+
+    [Fact]
     public void ExtractsVisibleTextWithBlockAndInlineSeparation()
     {
         var html = "<h1>News</h1><p>Hello <strong>world</strong>!</p><p>Next<br>line</p>";

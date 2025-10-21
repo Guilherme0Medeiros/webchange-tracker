@@ -14,6 +14,27 @@ public sealed class MonitorRulesTests
         Assert.False(WebChangeRadar.Api.Features.Monitors.MonitorRules.ShouldNotify("Sem correspondência", json));
         Assert.True(WebChangeRadar.Api.Features.Monitors.MonitorRules.ShouldNotify("Qualquer mudança", "[]"));
     }
+
+    [Fact]
+    public void NormalizesKeywordWhitespaceUnicodeAndCase()
+    {
+        var json = MonitorRules.SerializeKeywords(["  cafe\u0301  ", "CAFÉ", " ALERTA "]);
+        Assert.Equal(["café", "ALERTA"], MonitorRules.ReadKeywords(json));
+        Assert.True(MonitorRules.ShouldNotify("Novo alerta", json));
+        Assert.False(MonitorRules.ShouldNotify("Sem termos", json));
+    }
+
+    [Fact]
+    public void ValidatesSelectorAndKeywordLimits()
+    {
+        var url = "https://example.org";
+        Assert.Empty(MonitorRules.Validate("News", url, 60, "main .content", ["ALERTA"]));
+        Assert.Contains("contentSelector", MonitorRules.Validate("News", url, 60, "[").Keys);
+        Assert.Contains("keywords", MonitorRules.Validate("News", url, 60,
+            keywords: Enumerable.Repeat("term", 11).ToArray()).Keys);
+        Assert.Contains("keywords", MonitorRules.Validate("News", url, 60,
+            keywords: [new string('x', 61)]).Keys);
+    }
     [Theory]
     [InlineData(60)]
     [InlineData(360)]
