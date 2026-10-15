@@ -8,6 +8,7 @@ using WebChangeRadar.Api.Configuration;
 using WebChangeRadar.Api.Features.Auth;
 using WebChangeRadar.Api.Features.Monitors;
 using WebChangeRadar.Api.Services.Fetching;
+using WebChangeRadar.Api.Services.Extraction;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -88,6 +89,7 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services.AddHealthChecks();
 builder.Services.AddPageFetching();
+builder.Services.AddSingleton<IContentExtractor, ContentExtractor>();
 
 var app = builder.Build();
 
