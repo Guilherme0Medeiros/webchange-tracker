@@ -6,6 +6,7 @@ using System.Threading.RateLimiting;
 using WebChangeRadar.Api.Data;
 using WebChangeRadar.Api.Features.Auth;
 using WebChangeRadar.Api.Features.Monitors;
+using WebChangeRadar.Api.Services.Fetching;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,6 +79,7 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 builder.Services.AddHealthChecks();
+builder.Services.AddPageFetching();
 
 var app = builder.Build();
 
