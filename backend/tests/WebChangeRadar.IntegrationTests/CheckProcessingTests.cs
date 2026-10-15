@@ -2,6 +2,9 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using WebChangeRadar.Api.Data;
 using WebChangeRadar.Api.Features.Checks;
+using WebChangeRadar.Api.Features.Monitors;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using WebChangeRadar.Api.Services.Extraction;
 using WebChangeRadar.Api.Services.Fetching;
 using Xunit;
@@ -11,6 +14,57 @@ namespace WebChangeRadar.IntegrationTests;
 
 public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFixture<PostgreSqlFixture>
 {
+    private static CheckSchedule NormalSchedule => new(new ConfigurationBuilder().Build(),
+        Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        { EnvironmentName = Environments.Production }).Environment);
+
+    [PostgreSqlFact]
+    public async Task DevelopmentIntervalMakesExistingMonitorDueAndRegularScheduleRestores()
+    {
+        var now = DateTime.UtcNow;
+        var user = new ApplicationUser { UserName = $"accelerated-{Guid.NewGuid():N}@example.test" };
+        var monitor = new Monitor { Id = Guid.NewGuid(), UserId = user.Id, Name = "Existing",
+            Url = "https://example.org", IntervalMinutes = 360, Status = "active",
+            CreatedAt = now.AddMinutes(-3), UpdatedAt = now.AddMinutes(-3),
+            NextCheckAt = now.AddMinutes(357) };
+        await using (var db = database.CreateContext())
+        {
+            db.Users.Add(user);
+            db.Monitors.Add(monitor);
+            await db.SaveChangesAsync();
+        }
+
+        var schedule = new CheckSchedule(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["DevelopmentCheckIntervalMinutes"] = "2" }).Build(),
+            Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+            { EnvironmentName = Environments.Development }).Environment);
+        var productionSchedule = new CheckSchedule(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["DevelopmentCheckIntervalMinutes"] = "2" }).Build(),
+            Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+            { EnvironmentName = Environments.Production }).Environment);
+        var fetcher = new StubFetcher { Result = new PageFetchResult("<p>Baseline</p>",
+            new Uri(monitor.Url), null, HttpStatusCode.OK) };
+        await using (var db = database.CreateContext())
+            Assert.Equal(0, await new CheckProcessor(db, fetcher, new ContentExtractor(),
+                TimeProvider.System, productionSchedule).ProcessAsync(default));
+        await using (var db = database.CreateContext())
+            Assert.Equal(1, await new CheckProcessor(db, fetcher, new ContentExtractor(),
+                TimeProvider.System, schedule).ProcessAsync(default));
+        await using (var db = database.CreateContext())
+        {
+            var saved = await db.Monitors.SingleAsync(x => x.Id == monitor.Id);
+            Assert.Equal(360, saved.IntervalMinutes);
+            Assert.InRange(schedule.NextCheckAt(saved.NextCheckAt, saved.IntervalMinutes)!.Value,
+                now.AddMinutes(1), now.AddMinutes(3));
+            Assert.InRange(productionSchedule.NextCheckAt(saved.NextCheckAt, saved.IntervalMinutes)!.Value,
+                now.AddMinutes(359), now.AddMinutes(361));
+            Assert.Equal(1, await db.CheckRuns.CountAsync(x => x.MonitorId == monitor.Id));
+        }
+        await using (var db = database.CreateContext())
+            Assert.Equal(0, await new CheckProcessor(db, fetcher, new ContentExtractor(),
+                TimeProvider.System, schedule).ProcessAsync(default));
+    }
+
     [PostgreSqlFact]
     public async Task ExpiredLeaseCanBeReclaimedWithoutOldOwnerWriting()
     {
@@ -32,7 +86,7 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
         var first = Task.Run(async () =>
         {
             await using var db = database.CreateContext();
-            await new CheckProcessor(db, firstFetcher, new ContentExtractor(), TimeProvider.System)
+            await new CheckProcessor(db, firstFetcher, new ContentExtractor(), TimeProvider.System, NormalSchedule)
                 .ProcessAsync(default);
         });
         await firstFetcher.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -47,7 +101,7 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
             await new CheckProcessor(db, new StubFetcher
             {
                 Result = new PageFetchResult("<p>Second owner</p>", new Uri(monitor.Url), null, HttpStatusCode.OK)
-            }, new ContentExtractor(), TimeProvider.System).ProcessAsync(default);
+            }, new ContentExtractor(), TimeProvider.System, NormalSchedule).ProcessAsync(default);
         firstFetcher.Release.SetResult();
         await first;
         await using (var db = database.CreateContext())
@@ -96,7 +150,7 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
         }
         fetcher.Result = new PageFetchResult("<p>New site</p>", new Uri("https://example.net"), null, HttpStatusCode.OK);
         await using (var db = database.CreateContext())
-            await new CheckProcessor(db, fetcher, new ContentExtractor(), TimeProvider.System).ProcessAsync(default);
+            await new CheckProcessor(db, fetcher, new ContentExtractor(), TimeProvider.System, NormalSchedule).ProcessAsync(default);
         await AssertCounts(3, 1, 1, 5, 1);
 
         async Task Process(StubFetcher stub, string? html)
@@ -111,7 +165,7 @@ public sealed class CheckProcessingTests(PostgreSqlFixture database) : IClassFix
                     RequestedAt = DateTime.UtcNow });
                 await db.SaveChangesAsync();
             }
-            await new CheckProcessor(db, stub, new ContentExtractor(), TimeProvider.System).ProcessAsync(default);
+            await new CheckProcessor(db, stub, new ContentExtractor(), TimeProvider.System, NormalSchedule).ProcessAsync(default);
         }
 
         async Task AssertCounts(int snapshots, int changes, int notifications, int runs, int failures)

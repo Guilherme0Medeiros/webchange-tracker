@@ -96,6 +96,7 @@ builder.Services.AddHealthChecks();
 builder.Services.AddPageFetching();
 builder.Services.AddSingleton<IContentExtractor, ContentExtractor>();
 builder.Services.AddScoped<CheckProcessor>();
+builder.Services.AddSingleton<CheckSchedule>();
 
 var app = builder.Build();
 

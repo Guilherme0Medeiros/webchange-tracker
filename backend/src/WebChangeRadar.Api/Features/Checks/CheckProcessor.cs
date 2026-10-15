@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using WebChangeRadar.Api.Data;
+using WebChangeRadar.Api.Features.Monitors;
 using WebChangeRadar.Api.Services.Comparison;
 using WebChangeRadar.Api.Services.Extraction;
 using WebChangeRadar.Api.Services.Fetching;
@@ -7,7 +8,7 @@ using WebChangeRadar.Api.Services.Fetching;
 namespace WebChangeRadar.Api.Features.Checks;
 
 public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher,
-    IContentExtractor extractor, TimeProvider clock)
+    IContentExtractor extractor, TimeProvider clock, CheckSchedule schedule)
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     private const int BatchSize = 10;
@@ -15,11 +16,19 @@ public sealed class CheckProcessor(ApplicationDbContext db, IPageFetcher fetcher
     public async Task<int> ProcessAsync(CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow().UtcDateTime;
+        var developmentInterval = schedule.DevelopmentIntervalMinutes ?? 0;
         // Lock due monitors while making work, so concurrent scheduler calls cannot enqueue twice.
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
-            var due = await db.Monitors.FromSqlRaw(
-                "SELECT * FROM \"Monitors\" WHERE \"Status\" = 'active' AND \"NextCheckAt\" <= {0} ORDER BY \"NextCheckAt\" LIMIT 10 FOR UPDATE SKIP LOCKED", now)
+            var due = await db.Monitors.FromSqlInterpolated(
+                $"""
+                SELECT * FROM "Monitors"
+                WHERE "Status" = 'active' AND
+                    ("NextCheckAt" <= {now} OR
+                     ({developmentInterval} > 0 AND "NextCheckAt" - make_interval(mins => "IntervalMinutes") +
+                      make_interval(mins => {developmentInterval}) <= {now}))
+                ORDER BY "NextCheckAt" LIMIT 10 FOR UPDATE SKIP LOCKED
+                """)
                 .ToListAsync(cancellationToken);
             foreach (var monitor in due)
             {

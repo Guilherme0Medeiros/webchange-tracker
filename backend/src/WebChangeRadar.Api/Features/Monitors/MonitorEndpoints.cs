@@ -20,7 +20,7 @@ public static class MonitorEndpoints
     }
 
     private static async Task<IResult> ListAsync(
-        HttpContext http, ApplicationDbContext db, string? status, int page = 1, int pageSize = 20,
+        HttpContext http, ApplicationDbContext db, CheckSchedule schedule, string? status, int page = 1, int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
         var errors = new Dictionary<string, string[]>();
@@ -40,13 +40,15 @@ public static class MonitorEndpoints
         var items = await query.OrderByDescending(m => m.CreatedAt).ThenBy(m => m.Id)
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
-                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt))
+                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
+                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt)))
             .ToListAsync(cancellationToken);
-        return Results.Ok(new MonitorPageResponse(items, page, pageSize, totalCount));
+        return Results.Ok(new MonitorPageResponse(items.Select(m => m with
+        { NextCheckAt = schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes) }).ToList(), page, pageSize, totalCount));
     }
 
     private static async Task<IResult> CreateAsync(
-        HttpContext http, ApplicationDbContext db, MonitorRequest request, TimeProvider clock,
+        HttpContext http, ApplicationDbContext db, MonitorRequest request, TimeProvider clock, CheckSchedule schedule,
         CancellationToken cancellationToken)
     {
         var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
@@ -71,22 +73,24 @@ public static class MonitorEndpoints
         db.Monitors.Add(monitor);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Results.Created($"/api/monitors/{monitor.Id}", ToResponse(monitor));
+        return Results.Created($"/api/monitors/{monitor.Id}", ToResponse(monitor, schedule));
     }
 
     private static async Task<IResult> GetAsync(
-        HttpContext http, ApplicationDbContext db, Guid id, CancellationToken cancellationToken)
+        HttpContext http, ApplicationDbContext db, CheckSchedule schedule, Guid id, CancellationToken cancellationToken)
     {
         var monitor = await db.Monitors.AsNoTracking()
             .Where(m => m.Id == id && m.UserId == UserId(http))
             .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
-                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt))
+                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt,
+                db.CheckRuns.Where(c => c.MonitorId == m.Id).Max(c => c.FinishedAt)))
             .SingleOrDefaultAsync(cancellationToken);
-        return monitor is null ? NotFound() : Results.Ok(monitor);
+        return monitor is null ? NotFound() : Results.Ok(monitor with
+        { NextCheckAt = schedule.NextCheckAt(monitor.NextCheckAt, monitor.IntervalMinutes) });
     }
 
     private static async Task<IResult> UpdateAsync(
-        HttpContext http, ApplicationDbContext db, Guid id, MonitorRequest request, TimeProvider clock,
+        HttpContext http, ApplicationDbContext db, Guid id, MonitorRequest request, TimeProvider clock, CheckSchedule schedule,
         CancellationToken cancellationToken)
     {
         var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
@@ -109,11 +113,11 @@ public static class MonitorEndpoints
             monitor.NextCheckAt = urlChanged ? now : MonitorRules.NextCheckAt(now, request.IntervalMinutes);
         monitor.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
-        return Results.Ok(ToResponse(monitor));
+        return Results.Ok(ToResponse(monitor, schedule));
     }
 
     private static async Task<IResult> SetStatusAsync(
-        HttpContext http, ApplicationDbContext db, Guid id, MonitorStatusRequest request, TimeProvider clock,
+        HttpContext http, ApplicationDbContext db, Guid id, MonitorStatusRequest request, TimeProvider clock, CheckSchedule schedule,
         CancellationToken cancellationToken)
     {
         if (request.Status is not ("active" or "paused"))
@@ -131,7 +135,7 @@ public static class MonitorEndpoints
             monitor.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
         }
-        return Results.Ok(ToResponse(monitor));
+        return Results.Ok(ToResponse(monitor, schedule));
     }
 
     private static async Task<IResult> DeleteAsync(
@@ -158,13 +162,14 @@ public static class MonitorEndpoints
 
     private static string UserId(HttpContext http) => http.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitor not found.");
-    private static MonitorResponse ToResponse(Monitor m) => new(m.Id, m.Name, m.Url,
-        m.IntervalMinutes, m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt);
+    private static MonitorResponse ToResponse(Monitor m, CheckSchedule schedule) => new(m.Id, m.Name, m.Url,
+        m.IntervalMinutes, m.Status, schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes), m.CreatedAt, m.UpdatedAt);
 
     public sealed record MonitorRequest(string? Name, string? Url, int IntervalMinutes);
     public sealed record MonitorStatusRequest(string? Status);
     public sealed record MonitorResponse(Guid Id, string Name, string Url, int IntervalMinutes,
-        string Status, DateTime? NextCheckAt, DateTime CreatedAt, DateTime UpdatedAt);
+        string Status, DateTime? NextCheckAt, DateTime CreatedAt, DateTime UpdatedAt,
+        DateTime? LastCheckedAt = null);
     public sealed record MonitorPageResponse(IReadOnlyList<MonitorResponse> Items, int Page,
         int PageSize, int TotalCount);
 }

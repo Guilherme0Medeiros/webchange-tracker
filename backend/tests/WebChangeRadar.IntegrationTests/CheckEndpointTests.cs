@@ -61,7 +61,8 @@ public sealed class CheckEndpointTests(PostgreSqlFixture database, WebApplicatio
             builder.ConfigureLogging(logging => logging.ClearProviders());
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                 new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = database.ConnectionString,
-                    ["InternalJobs:Token"] = "integration-secret" }));
+                    ["InternalJobs:Token"] = "integration-secret",
+                    ["ManualCheckCooldownMinutes"] = "5" }));
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
