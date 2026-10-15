@@ -4,11 +4,19 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using WebChangeRadar.Api.Data;
+using WebChangeRadar.Api.Configuration;
 using WebChangeRadar.Api.Features.Auth;
 using WebChangeRadar.Api.Features.Monitors;
 using WebChangeRadar.Api.Services.Fetching;
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (builder.Environment.IsDevelopment())
+{
+    foreach (var setting in LocalEnvFile.Read())
+        if (builder.Configuration[setting.Key] is null)
+            builder.Configuration[setting.Key] = setting.Value;
+}
 
 builder.Services.AddDbContext<ApplicationDbContext>((services, options) =>
 {

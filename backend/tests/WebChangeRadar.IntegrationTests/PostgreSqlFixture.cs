@@ -1,35 +1,48 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using WebChangeRadar.Api.Data;
+using WebChangeRadar.Api.Configuration;
 using Xunit;
 
 namespace WebChangeRadar.IntegrationTests;
 
 public sealed class PostgreSqlFixture : IAsyncLifetime
 {
-    private readonly string _databaseName = $"webchange_test_{Guid.NewGuid():N}";
-    private string? _adminConnectionString;
+    private readonly string _schemaName = $"webchange_test_{Guid.NewGuid():N}";
+    private string? _baseConnectionString;
+    private bool _schemaCreated;
 
     public string ConnectionString { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        _adminConnectionString = Environment.GetEnvironmentVariable("WEBCHANGE_TEST_CONNECTION")
+        _baseConnectionString = LocalEnvFile.GetValue("WEBCHANGE_TEST_CONNECTION")
             ?? throw new InvalidOperationException("WEBCHANGE_TEST_CONNECTION is required.");
 
-        var builder = new NpgsqlConnectionStringBuilder(_adminConnectionString)
+        var builder = new NpgsqlConnectionStringBuilder(_baseConnectionString);
+        if (string.IsNullOrWhiteSpace(builder.Database))
+            throw new InvalidOperationException("WEBCHANGE_TEST_CONNECTION must name a test database.");
+        var developmentConnection = LocalEnvFile.GetValue("ConnectionStrings__DefaultConnection");
+        if (!string.IsNullOrWhiteSpace(developmentConnection))
         {
-            Database = _databaseName,
-            Pooling = false
-        };
-        ConnectionString = builder.ConnectionString;
-
-        await using (var admin = new NpgsqlConnection(_adminConnectionString))
-        {
-            await admin.OpenAsync();
-            await using var command = new NpgsqlCommand($"CREATE DATABASE \"{_databaseName}\"", admin);
-            await command.ExecuteNonQueryAsync();
+            var development = new NpgsqlConnectionStringBuilder(developmentConnection);
+            if (string.Equals(builder.Host, development.Host, StringComparison.OrdinalIgnoreCase) &&
+                builder.Port == development.Port &&
+                string.Equals(builder.Database, development.Database, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Test and development connections must use different databases.");
         }
+
+        await using (var connection = new NpgsqlConnection(_baseConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand($"CREATE SCHEMA \"{_schemaName}\"", connection);
+            await command.ExecuteNonQueryAsync();
+            _schemaCreated = true;
+        }
+
+        builder.SearchPath = _schemaName;
+        builder.Pooling = false;
+        ConnectionString = builder.ConnectionString;
 
         await using var context = CreateContext();
         await context.Database.MigrateAsync();
@@ -45,14 +58,14 @@ public sealed class PostgreSqlFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_adminConnectionString is null)
+        if (!_schemaCreated || _baseConnectionString is null)
         {
             return;
         }
 
-        await using var admin = new NpgsqlConnection(_adminConnectionString);
-        await admin.OpenAsync();
-        await using var command = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{_databaseName}\" WITH (FORCE)", admin);
+        await using var connection = new NpgsqlConnection(_baseConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schemaName}\" CASCADE", connection);
         await command.ExecuteNonQueryAsync();
     }
 }

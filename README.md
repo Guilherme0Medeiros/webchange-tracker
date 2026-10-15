@@ -11,11 +11,9 @@ Aplicação para acompanhar alterações no texto de páginas públicas. O back-
 
 ## Executar
 
-Instale o SDK do .NET 10 e Docker. Copie `.env.example` para `.env`, escolha uma senha local e execute na raiz do repositório:
+Instale o SDK do .NET 10 e PostgreSQL local. Copie `.env.example` para `.env` e configure as conexões de `webchange_dev` e `webchange_test` para o usuário `webchange_app`. A API carrega esse arquivo automaticamente apenas em `Development`; variáveis de ambiente definidas no processo têm prioridade. Em produção, use variáveis de ambiente normais. Execute na raiz do repositório:
 
 ```powershell
-docker compose up -d
-$env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=5432;Database=webchange_radar;Username=webchange;Password=<senha-do-.env>"
 dotnet tool restore
 dotnet ef database update --project backend/src/WebChangeRadar.Api --startup-project backend/src/WebChangeRadar.Api
 dotnet build --verbosity quiet
@@ -25,9 +23,11 @@ dotnet run --project backend/src/WebChangeRadar.Api --launch-profile https
 
 A API escuta em `https://localhost:7010` no perfil HTTPS. Para confiar no certificado local, execute `dotnet dev-certs https --trust`. `GET /health` retorna `200 OK` com o texto `Healthy`. Em desenvolvimento, o documento OpenAPI fica em `/openapi/v1.json`.
 
-`ApplicationDbContext` é o contexto do EF Core: ele mapeia usuários do Identity e monitoramentos para o PostgreSQL. A migration versionada cria as tabelas e as restrições. A API lê a conexão da variável de ambiente `ConnectionStrings__DefaultConnection`; não armazene a senha em arquivos versionados.
+Como alternativa ao PostgreSQL instalado no Windows, `docker compose up -d` inicia o PostgreSQL em contêiner e cria os dois bancos na primeira inicialização do volume. Escolha uma porta livre em `POSTGRES_PORT` se já houver um servidor local em 5432. Um volume antigo não executa novamente o script de criação do banco de testes.
 
-Para executar os testes com PostgreSQL real, defina `WEBCHANGE_TEST_CONNECTION` com uma conexão administrativa a um banco de teste (por exemplo, `Database=postgres`). Os testes criam e removem um banco isolado. Sem essa variável, os testes que exigem PostgreSQL são ignorados. O CI fornece um contêiner temporário para executá-los.
+`ApplicationDbContext` é o contexto do EF Core: ele mapeia usuários do Identity e monitoramentos para o PostgreSQL. As migrations versionadas criam as tabelas e as restrições. Não armazene credenciais em arquivos versionados.
+
+Os testes PostgreSQL usam `WEBCHANGE_TEST_CONNECTION`, carregada do ambiente ou do `.env`. O usuário precisa poder criar esquemas em `webchange_test`; cada fixture cria e remove seu próprio esquema. A conexão de teste deve apontar para um banco diferente da conexão de desenvolvimento. Sem essa configuração, os testes que exigem PostgreSQL são ignorados. O CI fornece um contêiner temporário.
 
 ## Autenticação
 

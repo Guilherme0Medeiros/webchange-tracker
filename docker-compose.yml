@@ -2,15 +2,16 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: webchange_radar
-      POSTGRES_USER: webchange
+      POSTGRES_DB: webchange_dev
+      POSTGRES_USER: webchange_app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U webchange -d webchange_radar"]
+      test: ["CMD-SHELL", "pg_isready -U webchange_app -d webchange_dev"]
       interval: 5s
       timeout: 3s
       retries: 10

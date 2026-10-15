@@ -1,9 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace WebChangeRadar.IntegrationTests;
@@ -126,11 +131,16 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
     }
 
     private WebApplicationFactory<Program> CreateFactory() => baseFactory.WithWebHostBuilder(builder =>
+    {
+        builder.ConfigureLogging(logging => logging.ClearProviders());
+        builder.ConfigureTestServices(services =>
+            services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider()));
         builder.ConfigureAppConfiguration((_, configuration) =>
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = database.ConnectionString
-            })));
+            }));
+    });
 
     private static HttpClient CreateClient(WebApplicationFactory<Program> factory) => factory.CreateClient(
         new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
