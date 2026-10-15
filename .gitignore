@@ -1,0 +1,22 @@
+# .NET build output and local tooling
+**/bin/
+**/obj/
+.vs/
+.vscode/
+docs/
+.idea/
+TestResults/
+*.user
+*.suo
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.Development.json
+**/appsettings.Local.json
+*.pfx
+*.key
+
+# Temporary SDK installation
+.tools/

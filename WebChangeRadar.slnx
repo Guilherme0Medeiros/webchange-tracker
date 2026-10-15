@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="backend/src/WebChangeRadar.Api/WebChangeRadar.Api.csproj" />
+  <Project Path="backend/tests/WebChangeRadar.UnitTests/WebChangeRadar.UnitTests.csproj" />
+  <Project Path="backend/tests/WebChangeRadar.IntegrationTests/WebChangeRadar.IntegrationTests.csproj" />
+</Solution>
