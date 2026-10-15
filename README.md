@@ -1,6 +1,6 @@
 # WebChange Radar
 
-Aplicação para acompanhar alterações no texto de páginas públicas. A primeira etapa contém apenas a API ASP.NET Core em .NET 10, o endpoint de saúde e a estrutura de testes. O produto completo está especificado em [docs/MVP.md](docs/MVP.md).
+Aplicação para acompanhar alterações no texto de páginas públicas. O back-end usa ASP.NET Core em .NET 10, PostgreSQL e Entity Framework Core. O produto completo está especificado em [docs/MVP.md](docs/MVP.md).
 
 ## Estrutura
 
@@ -11,9 +11,13 @@ Aplicação para acompanhar alterações no texto de páginas públicas. A prime
 
 ## Executar
 
-Instale o SDK do .NET 10 e execute na raiz do repositório:
+Instale o SDK do .NET 10 e Docker. Copie `.env.example` para `.env`, escolha uma senha local e execute na raiz do repositório:
 
 ```powershell
+docker compose up -d
+$env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=5432;Database=webchange_radar;Username=webchange;Password=<senha-do-.env>"
+dotnet tool restore
+dotnet ef database update --project backend/src/WebChangeRadar.Api --startup-project backend/src/WebChangeRadar.Api
 dotnet build --verbosity quiet
 dotnet test --verbosity quiet
 dotnet run --project backend/src/WebChangeRadar.Api
@@ -21,4 +25,6 @@ dotnet run --project backend/src/WebChangeRadar.Api
 
 A API escuta em `http://localhost:5010` no perfil padrão. `GET /health` retorna `200 OK` com o texto `Healthy`.
 
-`WebApplicationFactory` inicia a API em memória para testar a rota HTTP sem servidor externo. A configuração de banco de dados, autenticação e verificação de páginas será adicionada nas próximas etapas.
+`ApplicationDbContext` é o contexto do EF Core: ele mapeia usuários do Identity e monitoramentos para o PostgreSQL. A migration versionada cria as tabelas e as restrições. A API lê a conexão da variável de ambiente `ConnectionStrings__DefaultConnection`; não armazene a senha em arquivos versionados.
+
+Para executar os testes com PostgreSQL real, defina `WEBCHANGE_TEST_CONNECTION` com uma conexão administrativa a um banco de teste (por exemplo, `Database=postgres`). Os testes criam e removem um banco isolado. Sem essa variável, os testes que exigem PostgreSQL são ignorados. O CI fornece um contêiner temporário para executá-los.

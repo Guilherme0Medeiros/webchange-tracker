@@ -3,7 +3,6 @@
 **/obj/
 .vs/
 .vscode/
-docs/
 .idea/
 TestResults/
 *.user
