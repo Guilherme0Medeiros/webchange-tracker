@@ -19,3 +19,5 @@ TestResults/
 
 # Temporary SDK installation
 .tools/
+.dotnet/
+.dotnet-install.ps1

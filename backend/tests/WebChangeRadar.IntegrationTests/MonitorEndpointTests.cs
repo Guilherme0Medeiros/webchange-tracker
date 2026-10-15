@@ -1,0 +1,165 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Xunit;
+
+namespace WebChangeRadar.IntegrationTests;
+
+public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicationFactory<Program> baseFactory)
+    : IClassFixture<PostgreSqlFixture>, IClassFixture<WebApplicationFactory<Program>>
+{
+    private const string Password = "SecurePassword123!";
+
+    [PostgreSqlFact]
+    public async Task CrudStatusLimitAndPaging()
+    {
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/monitors")).StatusCode);
+        await RegisterAsync(client);
+
+        var before = DateTime.UtcNow;
+        var first = await CreateMonitorAsync(client, "First", "https://example.org/one", 60);
+        Assert.Equal("active", first.GetProperty("status").GetString());
+        Assert.InRange(first.GetProperty("nextCheckAt").GetDateTime(), before, DateTime.UtcNow);
+        var id = first.GetProperty("id").GetGuid();
+        await CreateMonitorAsync(client, "Second", "https://example.org/two", 360);
+        await CreateMonitorAsync(client, "Third", "https://example.org/three", 1440);
+
+        using var overLimit = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/monitors",
+            new { name = "Fourth", url = "https://example.org/four", intervalMinutes = 60 });
+        Assert.Equal(HttpStatusCode.Conflict, overLimit.StatusCode);
+
+        using var page = await client.GetAsync("/api/monitors?page=2&pageSize=2&status=active");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        var pageJson = await page.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3, pageJson.GetProperty("totalCount").GetInt32());
+        Assert.Single(pageJson.GetProperty("items").EnumerateArray());
+
+        using var update = await SendWithCsrfAsync(client, HttpMethod.Put, $"/api/monitors/{id}",
+            new { name = "Updated", url = "https://example.org/one", intervalMinutes = 360 });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var updated = await update.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Updated", updated.GetProperty("name").GetString());
+        Assert.InRange(updated.GetProperty("nextCheckAt").GetDateTime(),
+            DateTime.UtcNow.AddHours(6).AddMinutes(-1), DateTime.UtcNow.AddHours(6).AddMinutes(1));
+        await using (var db = database.CreateContext())
+            Assert.Null((await db.Monitors.SingleAsync(m => m.Id == id)).BaselineResetAt);
+
+        using var urlUpdate = await SendWithCsrfAsync(client, HttpMethod.Put, $"/api/monitors/{id}",
+            new { name = "Updated", url = "https://example.org/new", intervalMinutes = 360 });
+        Assert.Equal(HttpStatusCode.OK, urlUpdate.StatusCode);
+        var urlUpdated = await urlUpdate.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.InRange(urlUpdated.GetProperty("nextCheckAt").GetDateTime(), before, DateTime.UtcNow);
+        await using (var db = database.CreateContext())
+            Assert.InRange((await db.Monitors.SingleAsync(m => m.Id == id)).BaselineResetAt!.Value,
+                before, DateTime.UtcNow);
+
+        using var pause = await SendWithCsrfAsync(client, HttpMethod.Patch, $"/api/monitors/{id}/status",
+            new { status = "paused" });
+        Assert.Equal(HttpStatusCode.OK, pause.StatusCode);
+        var paused = await pause.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("paused", paused.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, paused.GetProperty("nextCheckAt").ValueKind);
+        using var pausedPage = await client.GetAsync("/api/monitors?status=paused");
+        Assert.Equal(1, (await pausedPage.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("totalCount").GetInt32());
+
+        using var resume = await SendWithCsrfAsync(client, HttpMethod.Patch, $"/api/monitors/{id}/status",
+            new { status = "active" });
+        var resumed = await resume.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.InRange(resumed.GetProperty("nextCheckAt").GetDateTime(), before, DateTime.UtcNow);
+
+        using var deleted = await SendWithCsrfAsync(client, HttpMethod.Delete, $"/api/monitors/{id}");
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/monitors/{id}")).StatusCode);
+        await CreateMonitorAsync(client, "Replacement", "https://example.org/replacement", 60);
+    }
+
+    [PostgreSqlFact]
+    public async Task UsersCannotReadChangeOrDeleteOthersMonitors()
+    {
+        using var factory = CreateFactory();
+        using var owner = CreateClient(factory);
+        using var other = CreateClient(factory);
+        await RegisterAsync(owner);
+        await RegisterAsync(other);
+        var monitor = await CreateMonitorAsync(owner, "Private", "https://example.org", 60);
+        var id = monitor.GetProperty("id").GetGuid();
+
+        Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync($"/api/monitors/{id}")).StatusCode);
+        using var list = await other.GetAsync("/api/monitors");
+        Assert.Equal(0, (await list.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("totalCount").GetInt32());
+        using var update = await SendWithCsrfAsync(other, HttpMethod.Put, $"/api/monitors/{id}",
+            new { name = "Changed", url = "https://example.org", intervalMinutes = 60 });
+        Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
+        using var pause = await SendWithCsrfAsync(other, HttpMethod.Patch, $"/api/monitors/{id}/status",
+            new { status = "paused" });
+        Assert.Equal(HttpStatusCode.NotFound, pause.StatusCode);
+        using var delete = await SendWithCsrfAsync(other, HttpMethod.Delete, $"/api/monitors/{id}");
+        Assert.Equal(HttpStatusCode.NotFound, delete.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/monitors/{id}")).StatusCode);
+    }
+
+    [PostgreSqlFact]
+    public async Task ValidatesInputPagingAndCsrf()
+    {
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        await RegisterAsync(client);
+        using var invalid = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/monitors",
+            new { name = " ", url = "ftp://example.org", intervalMinutes = 30 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var errors = (await invalid.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors");
+        Assert.True(errors.TryGetProperty("name", out _));
+        Assert.True(errors.TryGetProperty("url", out _));
+        Assert.True(errors.TryGetProperty("intervalMinutes", out _));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?page=0")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?pageSize=101")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?status=unknown")).StatusCode);
+        using var noCsrf = await client.PostAsJsonAsync("/api/monitors",
+            new { name = "Valid", url = "https://example.org", intervalMinutes = 60 });
+        Assert.Equal(HttpStatusCode.BadRequest, noCsrf.StatusCode);
+    }
+
+    private WebApplicationFactory<Program> CreateFactory() => baseFactory.WithWebHostBuilder(builder =>
+        builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = database.ConnectionString
+            })));
+
+    private static HttpClient CreateClient(WebApplicationFactory<Program> factory) => factory.CreateClient(
+        new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+    private static async Task RegisterAsync(HttpClient client)
+    {
+        using var response = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/auth/register",
+            new { email = $"monitor-{Guid.NewGuid():N}@example.test", password = Password });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static async Task<JsonElement> CreateMonitorAsync(HttpClient client, string name, string url, int interval)
+    {
+        using var response = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/monitors",
+            new { name, url, intervalMinutes = interval });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.StartsWith("/api/monitors/", response.Headers.Location?.ToString());
+        return await response.Content.ReadFromJsonAsync<JsonElement>();
+    }
+
+    private static async Task<HttpResponseMessage> SendWithCsrfAsync(
+        HttpClient client, HttpMethod method, string path, object? body = null)
+    {
+        using var tokenResponse = await client.GetAsync("/api/auth/csrf");
+        var token = (await tokenResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("requestToken").GetString();
+        using var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-CSRF-TOKEN", token);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        return await client.SendAsync(request);
+    }
+}

@@ -1,0 +1,156 @@
+using System.Security.Claims;
+using Microsoft.EntityFrameworkCore;
+using WebChangeRadar.Api.Data;
+using WebChangeRadar.Api.Features.Auth;
+using Monitor = WebChangeRadar.Api.Data.Monitor;
+
+namespace WebChangeRadar.Api.Features.Monitors;
+
+public static class MonitorEndpoints
+{
+    public static void MapMonitorEndpoints(this IEndpointRouteBuilder app)
+    {
+        var monitors = app.MapGroup("/api/monitors").RequireAuthorization();
+        monitors.MapGet("", ListAsync);
+        monitors.MapPost("", CreateAsync).AddEndpointFilter<RequireCsrfTokenFilter>();
+        monitors.MapGet("/{id:guid}", GetAsync);
+        monitors.MapPut("/{id:guid}", UpdateAsync).AddEndpointFilter<RequireCsrfTokenFilter>();
+        monitors.MapPatch("/{id:guid}/status", SetStatusAsync).AddEndpointFilter<RequireCsrfTokenFilter>();
+        monitors.MapDelete("/{id:guid}", DeleteAsync).AddEndpointFilter<RequireCsrfTokenFilter>();
+    }
+
+    private static async Task<IResult> ListAsync(
+        HttpContext http, ApplicationDbContext db, string? status, int page = 1, int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (status is not null && status is not ("active" or "paused"))
+            errors["status"] = ["Status must be active or paused."];
+        if (page < 1) errors["page"] = ["Page must be at least 1."];
+        if (pageSize is < 1 or > MonitorRules.MaxPageSize)
+            errors["pageSize"] = [$"Page size must be between 1 and {MonitorRules.MaxPageSize}."];
+        if (pageSize > 0 && page > int.MaxValue / pageSize)
+            errors["page"] = ["Page is too large."];
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+        var userId = UserId(http);
+        var query = db.Monitors.AsNoTracking().Where(m => m.UserId == userId);
+        if (status is not null) query = query.Where(m => m.Status == status);
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query.OrderByDescending(m => m.CreatedAt).ThenBy(m => m.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
+                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt))
+            .ToListAsync(cancellationToken);
+        return Results.Ok(new MonitorPageResponse(items, page, pageSize, totalCount));
+    }
+
+    private static async Task<IResult> CreateAsync(
+        HttpContext http, ApplicationDbContext db, MonitorRequest request, TimeProvider clock,
+        CancellationToken cancellationToken)
+    {
+        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+        var userId = UserId(http);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        // Serialize creations for this user so simultaneous requests cannot exceed the limit.
+        await db.Users.FromSqlInterpolated($"SELECT * FROM \"AspNetUsers\" WHERE \"Id\" = {userId} FOR UPDATE")
+            .AsNoTracking().SingleAsync(cancellationToken);
+        if (await db.Monitors.CountAsync(m => m.UserId == userId, cancellationToken) >= MonitorRules.MaxPerUser)
+            return Results.Problem(statusCode: 409, title: "Monitor limit reached.",
+                detail: $"A user can have at most {MonitorRules.MaxPerUser} monitors.");
+
+        var now = clock.GetUtcNow().UtcDateTime;
+        var monitor = new Monitor
+        {
+            Id = Guid.NewGuid(), UserId = userId, Name = request.Name!.Trim(), Url = request.Url!.Trim(),
+            IntervalMinutes = request.IntervalMinutes, Status = "active",
+            NextCheckAt = now, CreatedAt = now, UpdatedAt = now
+        };
+        db.Monitors.Add(monitor);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Results.Created($"/api/monitors/{monitor.Id}", ToResponse(monitor));
+    }
+
+    private static async Task<IResult> GetAsync(
+        HttpContext http, ApplicationDbContext db, Guid id, CancellationToken cancellationToken)
+    {
+        var monitor = await db.Monitors.AsNoTracking()
+            .Where(m => m.Id == id && m.UserId == UserId(http))
+            .Select(m => new MonitorResponse(m.Id, m.Name, m.Url, m.IntervalMinutes,
+                m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt))
+            .SingleOrDefaultAsync(cancellationToken);
+        return monitor is null ? NotFound() : Results.Ok(monitor);
+    }
+
+    private static async Task<IResult> UpdateAsync(
+        HttpContext http, ApplicationDbContext db, Guid id, MonitorRequest request, TimeProvider clock,
+        CancellationToken cancellationToken)
+    {
+        var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        var monitor = await OwnedMonitorAsync(db, UserId(http), id, cancellationToken);
+        if (monitor is null) return NotFound();
+
+        var now = clock.GetUtcNow().UtcDateTime;
+        var urlChanged = monitor.Url != request.Url!.Trim();
+        var intervalChanged = monitor.IntervalMinutes != request.IntervalMinutes;
+        monitor.Name = request.Name!.Trim();
+        monitor.Url = request.Url.Trim();
+        monitor.IntervalMinutes = request.IntervalMinutes;
+        if (urlChanged) monitor.BaselineResetAt = now;
+        if (monitor.Status == "active" && (urlChanged || intervalChanged))
+            monitor.NextCheckAt = urlChanged ? now : MonitorRules.NextCheckAt(now, request.IntervalMinutes);
+        monitor.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.Ok(ToResponse(monitor));
+    }
+
+    private static async Task<IResult> SetStatusAsync(
+        HttpContext http, ApplicationDbContext db, Guid id, MonitorStatusRequest request, TimeProvider clock,
+        CancellationToken cancellationToken)
+    {
+        if (request.Status is not ("active" or "paused"))
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["status"] = ["Status must be active or paused."]
+            });
+        var monitor = await OwnedMonitorAsync(db, UserId(http), id, cancellationToken);
+        if (monitor is null) return NotFound();
+        if (monitor.Status != request.Status)
+        {
+            var now = clock.GetUtcNow().UtcDateTime;
+            monitor.Status = request.Status;
+            monitor.NextCheckAt = request.Status == "active" ? now : null;
+            monitor.UpdatedAt = now;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        return Results.Ok(ToResponse(monitor));
+    }
+
+    private static async Task<IResult> DeleteAsync(
+        HttpContext http, ApplicationDbContext db, Guid id, CancellationToken cancellationToken)
+    {
+        var deleted = await db.Monitors.Where(m => m.Id == id && m.UserId == UserId(http))
+            .ExecuteDeleteAsync(cancellationToken);
+        return deleted == 0 ? NotFound() : Results.NoContent();
+    }
+
+    private static Task<Monitor?> OwnedMonitorAsync(ApplicationDbContext db, string userId, Guid id,
+        CancellationToken cancellationToken) => db.Monitors.SingleOrDefaultAsync(
+            m => m.Id == id && m.UserId == userId, cancellationToken);
+
+    private static string UserId(HttpContext http) => http.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+    private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitor not found.");
+    private static MonitorResponse ToResponse(Monitor m) => new(m.Id, m.Name, m.Url,
+        m.IntervalMinutes, m.Status, m.NextCheckAt, m.CreatedAt, m.UpdatedAt);
+
+    public sealed record MonitorRequest(string? Name, string? Url, int IntervalMinutes);
+    public sealed record MonitorStatusRequest(string? Status);
+    public sealed record MonitorResponse(Guid Id, string Name, string Url, int IntervalMinutes,
+        string Status, DateTime? NextCheckAt, DateTime CreatedAt, DateTime UpdatedAt);
+    public sealed record MonitorPageResponse(IReadOnlyList<MonitorResponse> Items, int Page,
+        int PageSize, int TotalCount);
+}

@@ -220,6 +220,9 @@ namespace WebChangeRadar.Api.Data.Migrations
 
             modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>
                 {
+                    b.Property<DateTime?>("BaselineResetAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
@@ -235,7 +238,7 @@ namespace WebChangeRadar.Api.Data.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
 
-                    b.Property<DateTime>("NextCheckAt")
+                    b.Property<DateTime?>("NextCheckAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")

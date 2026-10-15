@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using WebChangeRadar.Api.Data;
 using WebChangeRadar.Api.Features.Auth;
+using WebChangeRadar.Api.Features.Monitors;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -61,6 +62,7 @@ builder.Services.AddAntiforgery(options =>
     options.Cookie.Path = "/";
 });
 builder.Services.AddProblemDetails();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddOpenApi();
 builder.Services.AddRateLimiter(options =>
 {
@@ -95,6 +97,7 @@ app.UseAuthorization();
 
 app.MapHealthChecks("/health");
 app.MapAuthEndpoints();
+app.MapMonitorEndpoints();
 
 app.Run();
 

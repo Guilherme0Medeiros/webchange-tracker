@@ -25,7 +25,6 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.Property(monitor => monitor.Url).HasMaxLength(2048).IsRequired();
             entity.Property(monitor => monitor.Status).HasMaxLength(16).IsRequired();
             entity.Property(monitor => monitor.UserId).IsRequired();
-            entity.Property(monitor => monitor.NextCheckAt).IsRequired();
             entity.Property(monitor => monitor.CreatedAt).IsRequired();
             entity.Property(monitor => monitor.UpdatedAt).IsRequired();
 

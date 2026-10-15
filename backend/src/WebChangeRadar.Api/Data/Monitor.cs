@@ -9,7 +9,8 @@ public sealed class Monitor
     public required string Url { get; set; }
     public int IntervalMinutes { get; set; }
     public string Status { get; set; } = "active";
-    public DateTime NextCheckAt { get; set; }
+    public DateTime? NextCheckAt { get; set; }
+    public DateTime? BaselineResetAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
