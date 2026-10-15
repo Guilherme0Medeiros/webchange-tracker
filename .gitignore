@@ -21,3 +21,4 @@ TestResults/
 .tools/
 .dotnet/
 .dotnet-install.ps1
+docs/
