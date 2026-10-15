@@ -1,6 +1,6 @@
 export type User = { id: string; email: string };
 export type Page<T> = { items: T[]; page: number; pageSize: number; totalCount: number };
-export type Monitor = { id: string; name: string; url: string; intervalMinutes: number; status: "active" | "paused"; nextCheckAt: string | null; createdAt: string; updatedAt: string };
+export type Monitor = { id: string; name: string; url: string; intervalMinutes: number; status: "active" | "paused"; nextCheckAt: string | null; lastCheckedAt: string | null; createdAt: string; updatedAt: string };
 export type MonitorInput = Pick<Monitor, "name" | "url" | "intervalMinutes">;
 export type Dashboard = { activeMonitors: number; checks: number; changes: number; failures: number };
 export type Check = { id: string; triggerType: string; status: string; requestedAt: string; startedAt: string | null; finishedAt: string | null; httpStatusCode: number | null; errorCode: string | null; durationMs: number | null };
