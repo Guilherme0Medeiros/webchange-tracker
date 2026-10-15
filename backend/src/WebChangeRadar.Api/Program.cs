@@ -17,8 +17,11 @@ var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment())
 {
     foreach (var setting in LocalEnvFile.Read())
-        if (builder.Configuration[setting.Key] is null)
-            builder.Configuration[setting.Key] = setting.Value;
+    {
+        var key = setting.Key.Replace("__", ":", StringComparison.Ordinal);
+        if (builder.Configuration[key] is null)
+            builder.Configuration[key] = setting.Value;
+    }
 }
 
 builder.Services.AddDbContext<ApplicationDbContext>((services, options) =>
