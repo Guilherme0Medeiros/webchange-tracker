@@ -7,6 +7,7 @@ Aplicação para acompanhar alterações no texto de páginas públicas. O back-
 - `backend/src/WebChangeRadar.Api`: API e módulos por funcionalidade.
 - `backend/tests/WebChangeRadar.UnitTests`: testes unitários para as regras de negócio das próximas etapas.
 - `backend/tests/WebChangeRadar.IntegrationTests`: testes HTTP com `WebApplicationFactory`.
+- `frontend`: interface Next.js, TypeScript, Tailwind CSS e componentes shadcn/ui.
 - `docs/PROGRESS.md`: progresso da implementação.
 
 ## Executar
@@ -22,6 +23,20 @@ dotnet run --project backend/src/WebChangeRadar.Api --launch-profile https
 ```
 
 A API escuta em `https://localhost:7010` no perfil HTTPS. Para confiar no certificado local, execute `dotnet dev-certs https --trust`. `GET /health` retorna `200 OK` com o texto `Healthy`. Em desenvolvimento, o documento OpenAPI fica em `/openapi/v1.json`.
+
+### Frontend local
+
+Com a API e o PostgreSQL em execução, em outro terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Acesse `https://localhost:3000` e aceite o certificado de desenvolvimento do Next.js na primeira visita. Use `npm.cmd` no lugar de `npm` se o PowerShell bloquear scripts. O Next encaminha `/api/*` para `http://localhost:5010` por padrão. Para mudar o destino, configure `API_ORIGIN` antes de iniciar o frontend. Em produção, defina `API_ORIGIN` como a origem HTTPS da API e sirva o Next.js por HTTPS. O navegador acessa apenas a origem do Next; assim os cookies `Secure`, `HttpOnly` e `SameSite=Strict` e o token CSRF funcionam sem CORS nem acesso aos cookies pelo JavaScript. O servidor Next precisa estar acessível durante o uso da interface, pois faz o proxy da API.
+
+O frontend oferece cadastro, login, dashboard, gestão de monitoramentos, verificações manuais, histórico, comparação e notificações. Verificações manuais são enfileiradas; o resultado depende da chamada periódica ao endpoint interno documentado abaixo. Para verificar o frontend, execute em `frontend`: `npm run typecheck`, `npm run lint` e `npm run build`.
 
 Como alternativa ao PostgreSQL instalado no Windows, `docker compose up -d` inicia o PostgreSQL em contêiner e cria os dois bancos na primeira inicialização do volume. Escolha uma porta livre em `POSTGRES_PORT` se já houver um servidor local em 5432. Um volume antigo não executa novamente o script de criação do banco de testes.
 
