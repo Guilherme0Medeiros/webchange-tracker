@@ -17,10 +17,13 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 function Stop-ProcessTree([int]$processId) {
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if (-not $process) { return }
-    & taskkill.exe /PID $processId /T /F *> $null
+    try { & taskkill.exe /PID $processId /T /F *> $null } catch { }
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
 }
 
 $started = @()
+$frontendOutput = Join-Path ([IO.Path]::GetTempPath()) "webchange-frontend-$([Guid]::NewGuid().ToString('N')).log"
+$frontendErrors = Join-Path ([IO.Path]::GetTempPath()) "webchange-frontend-$([Guid]::NewGuid().ToString('N')).err.log"
 $client = [System.Net.Http.HttpClient]::new()
 $client.Timeout = [TimeSpan]::FromMinutes(3)
 try {
@@ -33,8 +36,20 @@ try {
         } finally {
             [Environment]::SetEnvironmentVariable('ASPNETCORE_ENVIRONMENT', $oldEnvironment)
         }
-        $frontend = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run', 'dev') -WorkingDirectory (Join-Path $root 'frontend') -WindowStyle Hidden -PassThru
-        $started += $frontend
+        $oldCertificate = [Environment]::GetEnvironmentVariable('NODE_EXTRA_CA_CERTS')
+        if ([string]::IsNullOrWhiteSpace($oldCertificate)) {
+            $certificate = Join-Path $root 'frontend/certificates/api-dev.pem'
+            if (-not (Test-Path -LiteralPath $certificate)) {
+                throw 'Certificado público da API não encontrado em frontend/certificates/api-dev.pem. Consulte o README.'
+            }
+            [Environment]::SetEnvironmentVariable('NODE_EXTRA_CA_CERTS', $certificate)
+        }
+        try {
+            $frontend = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run', 'dev') -WorkingDirectory (Join-Path $root 'frontend') -RedirectStandardOutput $frontendOutput -RedirectStandardError $frontendErrors -WindowStyle Hidden -PassThru
+            $started += $frontend
+        } finally {
+            [Environment]::SetEnvironmentVariable('NODE_EXTRA_CA_CERTS', $oldCertificate)
+        }
     }
 
     Write-Host "Aguardando a API em $apiUrl ..."
@@ -50,6 +65,21 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'A API não ficou disponível. Confira o PostgreSQL e o certificado HTTPS local.' }
+
+    if (-not $SchedulerOnly) {
+        $frontendUrl = $null
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            $output = Get-Content -LiteralPath $frontendOutput -Raw -ErrorAction SilentlyContinue
+            if ($output -match 'Local:\s*(https://localhost:\d+)') {
+                $frontendUrl = $Matches[1]
+                break
+            }
+            if ($frontend.HasExited) { throw 'O frontend terminou antes de ficar pronto. Consulte o certificado e as dependências npm.' }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $frontendUrl) { throw 'O frontend não informou uma URL HTTPS em até 60 segundos.' }
+        Write-Host "Frontend: $frontendUrl"
+    }
 
     Write-Host 'Agendador local ativo. Pressione Ctrl+C para encerrar.'
     $nextTick = [DateTimeOffset]::UtcNow
@@ -79,4 +109,5 @@ try {
 } finally {
     $client.Dispose()
     foreach ($process in $started) { Stop-ProcessTree $process.Id }
+    Remove-Item -LiteralPath $frontendOutput,$frontendErrors -ErrorAction SilentlyContinue
 }
