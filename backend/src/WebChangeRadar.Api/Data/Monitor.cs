@@ -11,6 +11,7 @@ public sealed class Monitor
     public string Status { get; set; } = "active";
     public DateTime? NextCheckAt { get; set; }
     public DateTime? BaselineResetAt { get; set; }
+    public Guid? CurrentSnapshotId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

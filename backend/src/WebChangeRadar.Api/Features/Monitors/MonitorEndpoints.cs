@@ -100,7 +100,11 @@ public static class MonitorEndpoints
         monitor.Name = request.Name!.Trim();
         monitor.Url = request.Url.Trim();
         monitor.IntervalMinutes = request.IntervalMinutes;
-        if (urlChanged) monitor.BaselineResetAt = now;
+        if (urlChanged)
+        {
+            monitor.BaselineResetAt = now;
+            monitor.CurrentSnapshotId = null;
+        }
         if (monitor.Status == "active" && (urlChanged || intervalChanged))
             monitor.NextCheckAt = urlChanged ? now : MonitorRules.NextCheckAt(now, request.IntervalMinutes);
         monitor.UpdatedAt = now;
@@ -133,9 +137,19 @@ public static class MonitorEndpoints
     private static async Task<IResult> DeleteAsync(
         HttpContext http, ApplicationDbContext db, Guid id, CancellationToken cancellationToken)
     {
-        var deleted = await db.Monitors.Where(m => m.Id == id && m.UserId == UserId(http))
-            .ExecuteDeleteAsync(cancellationToken);
-        return deleted == 0 ? NotFound() : Results.NoContent();
+        var userId = UserId(http);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var monitor = await db.Monitors.FromSqlInterpolated(
+            $"SELECT * FROM \"Monitors\" WHERE \"Id\" = {id} AND \"UserId\" = {userId} FOR UPDATE")
+            .SingleOrDefaultAsync(cancellationToken);
+        if (monitor is null) return NotFound();
+        await db.Notifications.Where(x => x.ChangeEvent.MonitorId == id).ExecuteDeleteAsync(cancellationToken);
+        await db.ChangeEvents.Where(x => x.MonitorId == id).ExecuteDeleteAsync(cancellationToken);
+        await db.Snapshots.Where(x => x.MonitorId == id).ExecuteDeleteAsync(cancellationToken);
+        db.Monitors.Remove(monitor);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Results.NoContent();
     }
 
     private static Task<Monitor?> OwnedMonitorAsync(ApplicationDbContext db, string userId, Guid id,

@@ -9,6 +9,7 @@ using WebChangeRadar.Api.Features.Auth;
 using WebChangeRadar.Api.Features.Monitors;
 using WebChangeRadar.Api.Services.Fetching;
 using WebChangeRadar.Api.Services.Extraction;
+using WebChangeRadar.Api.Features.Checks;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -90,6 +91,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddHealthChecks();
 builder.Services.AddPageFetching();
 builder.Services.AddSingleton<IContentExtractor, ContentExtractor>();
+builder.Services.AddScoped<CheckProcessor>();
 
 var app = builder.Build();
 
@@ -110,6 +112,7 @@ app.UseAuthorization();
 app.MapHealthChecks("/health");
 app.MapAuthEndpoints();
 app.MapMonitorEndpoints();
+app.MapCheckProcessingEndpoints();
 
 app.Run();
 

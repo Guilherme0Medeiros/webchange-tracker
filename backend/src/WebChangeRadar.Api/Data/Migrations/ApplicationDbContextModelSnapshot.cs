@@ -218,17 +218,100 @@ namespace WebChangeRadar.Api.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
-            modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>
+            modelBuilder.Entity("WebChangeRadar.Api.Data.ChangeEvent", b =>
                 {
-                    b.Property<DateTime?>("BaselineResetAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime>("DetectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MonitorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("NewSnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OldSnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NewSnapshotId")
+                        .IsUnique();
+
+                    b.HasIndex("OldSnapshotId");
+
+                    b.HasIndex("MonitorId", "DetectedAt");
+
+                    b.ToTable("ChangeEvents");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.CheckRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MonitorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("TriggerType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MonitorId", "RequestedAt");
+
+                    b.HasIndex("Status", "LeaseExpiresAt");
+
+                    b.ToTable("CheckRuns");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("BaselineResetAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CurrentSnapshotId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("IntervalMinutes")
                         .HasColumnType("integer");
@@ -270,6 +353,63 @@ namespace WebChangeRadar.Api.Data.Migrations
 
                             t.HasCheckConstraint("CK_Monitors_Status", "\"Status\" IN ('active', 'paused')");
                         });
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChangeEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangeEventId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.Snapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CapturedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("MonitorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NormalizedText")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MonitorId", "CapturedAt");
+
+                    b.ToTable("Snapshots");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
@@ -323,6 +463,44 @@ namespace WebChangeRadar.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("WebChangeRadar.Api.Data.ChangeEvent", b =>
+                {
+                    b.HasOne("WebChangeRadar.Api.Data.Monitor", "Monitor")
+                        .WithMany()
+                        .HasForeignKey("MonitorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WebChangeRadar.Api.Data.Snapshot", "NewSnapshot")
+                        .WithMany()
+                        .HasForeignKey("NewSnapshotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebChangeRadar.Api.Data.Snapshot", "OldSnapshot")
+                        .WithMany()
+                        .HasForeignKey("OldSnapshotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Monitor");
+
+                    b.Navigation("NewSnapshot");
+
+                    b.Navigation("OldSnapshot");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.CheckRun", b =>
+                {
+                    b.HasOne("WebChangeRadar.Api.Data.Monitor", "Monitor")
+                        .WithMany()
+                        .HasForeignKey("MonitorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Monitor");
+                });
+
             modelBuilder.Entity("WebChangeRadar.Api.Data.Monitor", b =>
                 {
                     b.HasOne("WebChangeRadar.Api.Data.ApplicationUser", "User")
@@ -332,6 +510,36 @@ namespace WebChangeRadar.Api.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.Notification", b =>
+                {
+                    b.HasOne("WebChangeRadar.Api.Data.ChangeEvent", "ChangeEvent")
+                        .WithMany()
+                        .HasForeignKey("ChangeEventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WebChangeRadar.Api.Data.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChangeEvent");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("WebChangeRadar.Api.Data.Snapshot", b =>
+                {
+                    b.HasOne("WebChangeRadar.Api.Data.Monitor", "Monitor")
+                        .WithMany()
+                        .HasForeignKey("MonitorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Monitor");
                 });
 
             modelBuilder.Entity("WebChangeRadar.Api.Data.ApplicationUser", b =>
