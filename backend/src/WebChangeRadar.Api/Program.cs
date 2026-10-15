@@ -10,6 +10,7 @@ using WebChangeRadar.Api.Features.Monitors;
 using WebChangeRadar.Api.Services.Fetching;
 using WebChangeRadar.Api.Services.Extraction;
 using WebChangeRadar.Api.Features.Checks;
+using WebChangeRadar.Api.Features.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -113,6 +114,8 @@ app.MapHealthChecks("/health");
 app.MapAuthEndpoints();
 app.MapMonitorEndpoints();
 app.MapCheckProcessingEndpoints();
+app.MapCheckEndpoints();
+app.MapNotificationEndpoints();
 
 app.Run();
 
