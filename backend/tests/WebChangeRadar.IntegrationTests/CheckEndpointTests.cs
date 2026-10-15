@@ -18,6 +18,41 @@ public sealed class CheckEndpointTests(PostgreSqlFixture database, WebApplicatio
     : IClassFixture<PostgreSqlFixture>, IClassFixture<WebApplicationFactory<Program>>
 {
     [PostgreSqlFact]
+    public async Task ZeroManualCooldownOnlyAppliesInDevelopment()
+    {
+        await AssertSecondRequest("Development", HttpStatusCode.Accepted);
+        await AssertSecondRequest("Production", (HttpStatusCode)429);
+
+        async Task AssertSecondRequest(string environment, HttpStatusCode expected)
+        {
+            using var factory = baseFactory.WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment(environment);
+                builder.ConfigureLogging(logging => logging.ClearProviders());
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:DefaultConnection"] = database.ConnectionString,
+                        ["ManualCheckCooldownMinutes"] = "0"
+                    }));
+                builder.ConfigureTestServices(services =>
+                    services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider()));
+            });
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+                { BaseAddress = new Uri("https://localhost") });
+            await Register(client);
+            using var created = await WithCsrf(client, HttpMethod.Post, "/api/monitors",
+                new { name = "Example", url = "https://example.org", intervalMinutes = 60 });
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+            using var first = await WithCsrf(client, HttpMethod.Post, $"/api/monitors/{id}/checks");
+            Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+            using var second = await WithCsrf(client, HttpMethod.Post, $"/api/monitors/{id}/checks");
+            Assert.Equal(expected, second.StatusCode);
+        }
+    }
+
+    [PostgreSqlFact]
     public async Task ManualQueueHistoryDiffAndNotificationsArePrivate()
     {
         var fetcher = new StubFetcher();

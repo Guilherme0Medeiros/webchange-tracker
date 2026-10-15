@@ -17,7 +17,7 @@ public static class CheckProcessingEndpoints
     }
 
     private static async Task<IResult> QueueAsync(HttpContext http, ApplicationDbContext db, Guid id,
-        TimeProvider clock, CancellationToken ct)
+        TimeProvider clock, IConfiguration configuration, IHostEnvironment environment, CancellationToken ct)
     {
         var userId = http.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -27,8 +27,11 @@ public static class CheckProcessingEndpoints
         if (monitor is null) return Results.Problem(statusCode: 404, title: "Resource not found.");
         if (monitor.Status != "active") return Results.Problem(statusCode: 409, title: "Monitor is paused.");
         var now = clock.GetUtcNow().UtcDateTime;
-        if (await db.CheckRuns.AnyAsync(x => x.MonitorId == id && x.TriggerType == "manual" &&
-            x.RequestedAt > now.AddMinutes(-5), ct))
+        var configuredCooldown = configuration.GetValue<int?>("ManualCheckCooldownMinutes") ?? 5;
+        var cooldownMinutes = configuredCooldown < 0 ? 5 :
+            environment.IsDevelopment() ? configuredCooldown : Math.Max(configuredCooldown, 5);
+        if (cooldownMinutes > 0 && await db.CheckRuns.AnyAsync(x => x.MonitorId == id &&
+            x.TriggerType == "manual" && x.RequestedAt > now.AddMinutes(-cooldownMinutes), ct))
             return Results.Problem(statusCode: 429, title: "Manual check limit reached.");
         var run = new CheckRun { Id = Guid.NewGuid(), MonitorId = id, TriggerType = "manual", RequestedAt = now };
         db.CheckRuns.Add(run);
