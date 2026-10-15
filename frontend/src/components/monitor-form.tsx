@@ -2,12 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { mutate, type Monitor, type MonitorInput } from "@/lib/api";
+import { invalidatePaths } from "@/lib/radar-query";
 
 export function MonitorForm({ monitor }: { monitor?: Monitor }) {
   const router = useRouter();
+  const { mutate: revalidate } = useSWRConfig();
   const [name, setName] = useState(monitor?.name ?? "");
   const [url, setUrl] = useState(monitor?.url ?? "");
   const [intervalMinutes, setIntervalMinutes] = useState(monitor?.intervalMinutes ?? 360);
@@ -18,8 +21,8 @@ export function MonitorForm({ monitor }: { monitor?: Monitor }) {
     const input: MonitorInput = { name, url, intervalMinutes };
     try {
       const saved = await mutate<Monitor>(monitor ? `/monitors/${monitor.id}` : "/monitors", monitor ? "PUT" : "POST", input);
+      await invalidatePaths(revalidate, ["/dashboard", "/monitors", ...(monitor ? [`/monitors/${monitor.id}`] : [])]);
       router.push(`/monitors/${saved.id}`);
-      router.refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível salvar o monitoramento."); }
     finally { setBusy(false); }
   }
