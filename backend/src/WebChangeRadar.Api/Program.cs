@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.WebUtilities;
 using System.Threading.RateLimiting;
 using WebChangeRadar.Api.Data;
 using WebChangeRadar.Api.Configuration;
@@ -58,13 +59,13 @@ builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.Events.OnRedirectToLogin = context =>
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return Task.CompletedTask;
+            return Results.Problem(statusCode: StatusCodes.Status401Unauthorized,
+                title: "Entre na sua conta para continuar.").ExecuteAsync(context.HttpContext);
         };
         options.Events.OnRedirectToAccessDenied = context =>
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return Task.CompletedTask;
+            return Results.Problem(statusCode: StatusCodes.Status403Forbidden,
+                title: "Você não tem permissão para acessar este recurso.").ExecuteAsync(context.HttpContext);
         };
     });
 builder.Services.AddAuthorization();
@@ -77,12 +78,31 @@ builder.Services.AddAntiforgery(options =>
     options.Cookie.SameSite = SameSiteMode.Strict;
     options.Cookie.Path = "/";
 });
-builder.Services.AddProblemDetails();
+builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
+{
+    var status = context.ProblemDetails.Status ?? context.HttpContext.Response.StatusCode;
+    var defaultTitle = ReasonPhrases.GetReasonPhrase(status);
+    if (string.IsNullOrWhiteSpace(context.ProblemDetails.Title) || context.ProblemDetails.Title == defaultTitle)
+        context.ProblemDetails.Title = status switch
+        {
+            400 => "Solicitação inválida.",
+            401 => "Entre na sua conta para continuar.",
+            403 => "Você não tem permissão para acessar este recurso.",
+            404 => "Recurso não encontrado.",
+            405 => "Operação não permitida para este endereço.",
+            429 => "Muitas solicitações. Aguarde e tente novamente.",
+            _ => "Não foi possível concluir a solicitação. Tente novamente mais tarde."
+        };
+    if (status >= 500) context.ProblemDetails.Detail = null;
+});
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddOpenApi();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, _) =>
+        new ValueTask(Results.Problem(statusCode: StatusCodes.Status429TooManyRequests,
+            title: "Muitas solicitações. Aguarde e tente novamente.").ExecuteAsync(context.HttpContext));
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions
@@ -103,11 +123,23 @@ builder.Services.AddSingleton<CheckSchedule>();
 
 var app = builder.Build();
 
-if (!app.Environment.IsDevelopment())
+app.UseExceptionHandler(handler => handler.Run(async context =>
 {
-    app.UseExceptionHandler();
-}
-else
+    var status = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error
+        is BadHttpRequestException badRequest ? badRequest.StatusCode : StatusCodes.Status500InternalServerError;
+    await Results.Problem(statusCode: status,
+        title: status == StatusCodes.Status400BadRequest
+            ? "Solicitação inválida. Verifique os dados enviados."
+            : "Não foi possível concluir a solicitação. Tente novamente mais tarde.")
+        .ExecuteAsync(context);
+}));
+app.UseStatusCodePages(async statusContext =>
+{
+    var context = statusContext.HttpContext;
+    if (!context.Request.Path.StartsWithSegments("/api")) return;
+    await Results.Problem(statusCode: context.Response.StatusCode).ExecuteAsync(context);
+});
+if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }

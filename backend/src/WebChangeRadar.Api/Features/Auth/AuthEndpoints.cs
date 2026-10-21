@@ -43,7 +43,7 @@ public static class AuthEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["email"] = ["Informe um e-mail válido com até 254 caracteres."]
-            });
+            }, title: "Uma ou mais informações são inválidas.");
         }
 
         if (string.IsNullOrEmpty(request.Password))
@@ -51,7 +51,7 @@ public static class AuthEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["password"] = ["Informe uma senha."]
-            });
+            }, title: "Uma ou mais informações são inválidas.");
         }
 
         var user = new ApplicationUser { UserName = email, Email = email };
@@ -65,7 +65,7 @@ public static class AuthEndpoints
             {
                 [field] = errors.Select(error => RegistrationErrorMessage(error.Code,
                     users.Options.Password.RequiredLength)).ToArray()
-            });
+            }, title: "Uma ou mais informações são inválidas.");
         }
 
         await signInManager.SignInAsync(user, isPersistent: false);
@@ -119,7 +119,7 @@ public static class AuthEndpoints
         "PasswordRequiresUpper" => "A senha deve conter pelo menos uma letra maiúscula.",
         "PasswordRequiresNonAlphanumeric" => "A senha deve conter pelo menos um símbolo, como ! ou #.",
         "PasswordRequiresUniqueChars" => "A senha deve conter mais caracteres diferentes.",
-        "DuplicateEmail" or "DuplicateUserName" => "Este e-mail já está cadastrado.",
+        "DuplicateEmail" or "DuplicateUserName" => "Não foi possível criar a conta com os dados informados.",
         "InvalidEmail" or "InvalidUserName" => "Informe um e-mail válido.",
         _ => "Não foi possível criar a conta. Verifique os dados e tente novamente."
     };

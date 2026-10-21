@@ -97,6 +97,6 @@ public static class CheckEndpoints
         (from is null || from.Value.Kind == DateTimeKind.Utc) &&
         (to is null || to.Value.Kind == DateTimeKind.Utc) &&
         (from is null || to is null || from <= to);
-    private static IResult Missing() => Results.Problem(statusCode: 404, title: "Resource not found.");
-    private static IResult BadQuery() => Results.Problem(statusCode: 400, title: "Invalid query parameters.");
+    private static IResult Missing() => Results.Problem(statusCode: 404, title: "Recurso não encontrado.");
+    private static IResult BadQuery() => Results.Problem(statusCode: 400, title: "Filtros de consulta inválidos.");
 }

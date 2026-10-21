@@ -41,6 +41,12 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         {
             Assert.Equal(3, responses.Count(response => response.StatusCode == HttpStatusCode.Created));
             Assert.Equal(2, responses.Count(response => response.StatusCode == HttpStatusCode.Conflict));
+            foreach (var limited in responses.Where(response => response.StatusCode == HttpStatusCode.Conflict))
+            {
+                var problem = await limited.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal("Limite de monitoramentos atingido.", problem.GetProperty("title").GetString());
+                Assert.Equal("Você pode ter até 3 monitoramentos.", problem.GetProperty("detail").GetString());
+            }
             var list = await client.GetFromJsonAsync<JsonElement>("/api/monitors");
             Assert.Equal(3, list.GetProperty("totalCount").GetInt32());
         }
@@ -112,7 +118,10 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
 
         using var deleted = await SendWithCsrfAsync(client, HttpMethod.Delete, $"/api/monitors/{id}");
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/monitors/{id}")).StatusCode);
+        using var missing = await client.GetAsync($"/api/monitors/{id}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("Monitoramento não encontrado.",
+            (await missing.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
         await CreateMonitorAsync(client, "Replacement", "https://example.org/replacement", 60);
     }
 
@@ -196,12 +205,16 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         Assert.True(errors.TryGetProperty("name", out _));
         Assert.True(errors.TryGetProperty("url", out _));
         Assert.True(errors.TryGetProperty("intervalMinutes", out _));
+        Assert.Equal("Informe uma URL pública HTTP ou HTTPS, sem usuário ou senha, com até 2.048 caracteres.",
+            errors.GetProperty("url")[0].GetString());
         using var invalidSelector = await SendWithCsrfAsync(client, HttpMethod.Post, "/api/monitors",
             new { name = "Valid", url = "https://example.org", intervalMinutes = 60,
                 contentSelector = "main[", keywords = Enumerable.Range(0, 11).Select(x => $"word{x}").ToArray() });
         Assert.Equal(HttpStatusCode.BadRequest, invalidSelector.StatusCode);
         var selectorErrors = (await invalidSelector.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors");
         Assert.True(selectorErrors.TryGetProperty("contentSelector", out _));
+        Assert.Equal("Informe um seletor CSS válido com até 160 caracteres.",
+            selectorErrors.GetProperty("contentSelector")[0].GetString());
         Assert.True(selectorErrors.TryGetProperty("keywords", out _));
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?page=0")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/monitors?pageSize=101")).StatusCode);
@@ -209,6 +222,8 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
         using var noCsrf = await client.PostAsJsonAsync("/api/monitors",
             new { name = "Valid", url = "https://example.org", intervalMinutes = 60 });
         Assert.Equal(HttpStatusCode.BadRequest, noCsrf.StatusCode);
+        Assert.Equal("Não foi possível validar a solicitação. Atualize a página e tente novamente.",
+            (await noCsrf.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
     }
 
     private WebApplicationFactory<Program> CreateFactory() => baseFactory.WithWebHostBuilder(builder =>

@@ -12,7 +12,7 @@ public sealed class RequireCsrfTokenFilter(IAntiforgery antiforgery) : IEndpoint
         }
         catch (AntiforgeryValidationException)
         {
-            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Invalid CSRF token.");
+            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Não foi possível validar a solicitação. Atualize a página e tente novamente.");
         }
 
         return await next(context);

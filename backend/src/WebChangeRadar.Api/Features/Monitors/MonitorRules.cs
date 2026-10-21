@@ -14,18 +14,18 @@ public static class MonitorRules
     {
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 120 || name.Any(char.IsControl))
-            errors["name"] = ["Name must contain 1 to 120 characters."];
+            errors["name"] = ["Informe um nome de 1 a 120 caracteres, sem caracteres de controle."];
 
         if (!PublicUrlGuard.TryParse(url, out _))
-            errors["url"] = ["Enter a public absolute HTTP or HTTPS URL without credentials (at most 2048 characters)."];
+            errors["url"] = ["Informe uma URL pública HTTP ou HTTPS, sem usuário ou senha, com até 2.048 caracteres."];
 
         if (intervalMinutes is not (60 or 360 or 1440))
-            errors["intervalMinutes"] = ["Allowed values are 60, 360, or 1440 minutes."];
+            errors["intervalMinutes"] = ["Escolha um intervalo de 60, 360 ou 1.440 minutos."];
         if (!string.IsNullOrWhiteSpace(contentSelector) &&
             (contentSelector.Trim().Length > 160 || !ContentExtractor.IsValidSelector(contentSelector.Trim())))
-            errors["contentSelector"] = ["Enter a valid CSS selector of at most 160 characters."];
+            errors["contentSelector"] = ["Informe um seletor CSS válido com até 160 caracteres."];
         if (keywords is { Length: > 10 } || keywords?.Any(x => string.IsNullOrWhiteSpace(x) || x.Trim().Length > 60) == true)
-            errors["keywords"] = ["Use at most 10 non-empty phrases of at most 60 characters each."];
+            errors["keywords"] = ["Informe até 10 expressões não vazias, com até 60 caracteres cada."];
         return errors;
     }
 

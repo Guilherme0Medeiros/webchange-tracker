@@ -25,15 +25,15 @@ public static class CheckProcessingEndpoints
         var monitor = await db.Monitors.FromSqlInterpolated(
             $"SELECT * FROM \"Monitors\" WHERE \"Id\" = {id} AND \"UserId\" = {userId} FOR UPDATE")
             .SingleOrDefaultAsync(ct);
-        if (monitor is null) return Results.Problem(statusCode: 404, title: "Resource not found.");
-        if (monitor.Status != "active") return Results.Problem(statusCode: 409, title: "Monitor is paused.");
+        if (monitor is null) return Results.Problem(statusCode: 404, title: "Monitoramento não encontrado.");
+        if (monitor.Status != "active") return Results.Problem(statusCode: 409, title: "O monitoramento está pausado.");
         var now = clock.GetUtcNow().UtcDateTime;
         var configuredCooldown = configuration.GetValue<int?>("ManualCheckCooldownMinutes") ?? 5;
         var cooldownMinutes = configuredCooldown < 0 ? 5 :
             environment.IsDevelopment() ? configuredCooldown : Math.Max(configuredCooldown, 5);
         if (cooldownMinutes > 0 && await db.CheckRuns.AnyAsync(x => x.MonitorId == id &&
             x.TriggerType == "manual" && x.RequestedAt > now.AddMinutes(-cooldownMinutes), ct))
-            return Results.Problem(statusCode: 429, title: "Manual check limit reached.");
+            return Results.Problem(statusCode: 429, title: "Aguarde antes de iniciar outra verificação manual.");
         var run = new CheckRun { Id = Guid.NewGuid(), MonitorId = id, TriggerType = "manual", RequestedAt = now };
         db.CheckRuns.Add(run);
         await db.SaveChangesAsync(ct);

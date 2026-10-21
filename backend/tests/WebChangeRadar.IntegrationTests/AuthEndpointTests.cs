@@ -26,7 +26,10 @@ public sealed class AuthEndpointTests(
         using var client = CreateClient(factory);
         var email = UniqueEmail();
 
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
+        using var unauthenticated = await client.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.StatusCode);
+        Assert.Equal("Entre na sua conta para continuar.",
+            (await unauthenticated.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
         Assert.Equal(HttpStatusCode.BadRequest,
             (await client.PostAsJsonAsync("/api/auth/register", new { email, password = Password })).StatusCode);
 
@@ -72,6 +75,8 @@ public sealed class AuthEndpointTests(
             (await wrongPassword.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
         using var unknownUser = await PostWithCsrfAsync(client, "/api/auth/login", new { email = UniqueEmail(), password = Password }, token);
         Assert.Equal(HttpStatusCode.Unauthorized, unknownUser.StatusCode);
+        Assert.Equal("E-mail ou senha inválidos.",
+            (await unknownUser.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
 
         using var login = await PostWithCsrfAsync(client, "/api/auth/login", new { email, password = Password }, token);
@@ -120,7 +125,7 @@ public sealed class AuthEndpointTests(
         token = await GetCsrfTokenAsync(client);
         using var duplicate = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = eightCharacterPassword }, token);
         Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
-        Assert.Equal("Este e-mail já está cadastrado.",
+        Assert.Equal("Não foi possível criar a conta com os dados informados.",
             (await duplicate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("email")[0].GetString());
     }
 
@@ -141,6 +146,8 @@ public sealed class AuthEndpointTests(
         using var blocked = await PostWithCsrfAsync(client, "/api/auth/login",
             new { email = UniqueEmail(), password = Password }, token);
         Assert.Equal(HttpStatusCode.TooManyRequests, blocked.StatusCode);
+        Assert.Equal("Muitas solicitações. Aguarde e tente novamente.",
+            (await blocked.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
     }
 
     private WebApplicationFactory<Program> CreateFactory() => baseFactory.WithWebHostBuilder(builder =>

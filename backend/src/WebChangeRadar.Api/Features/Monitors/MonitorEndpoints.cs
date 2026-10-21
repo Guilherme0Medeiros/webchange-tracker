@@ -25,13 +25,13 @@ public static class MonitorEndpoints
     {
         var errors = new Dictionary<string, string[]>();
         if (status is not null && status is not ("active" or "paused"))
-            errors["status"] = ["Status must be active or paused."];
-        if (page < 1) errors["page"] = ["Page must be at least 1."];
+            errors["status"] = ["O status deve ser ativo ou pausado."];
+        if (page < 1) errors["page"] = ["A página deve ser maior que zero."];
         if (pageSize is < 1 or > MonitorRules.MaxPageSize)
-            errors["pageSize"] = [$"Page size must be between 1 and {MonitorRules.MaxPageSize}."];
+            errors["pageSize"] = [$"O tamanho da página deve estar entre 1 e {MonitorRules.MaxPageSize}."];
         if (pageSize > 0 && page > int.MaxValue / pageSize)
-            errors["page"] = ["Page is too large."];
-        if (errors.Count > 0) return Results.ValidationProblem(errors);
+            errors["page"] = ["O número da página é muito alto."];
+        if (errors.Count > 0) return Results.ValidationProblem(errors, title: "Uma ou mais informações são inválidas.");
 
         var userId = UserId(http);
         var query = db.Monitors.AsNoTracking().Where(m => m.UserId == userId);
@@ -55,7 +55,7 @@ public static class MonitorEndpoints
     {
         var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes,
             request.ContentSelector, request.Keywords);
-        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        if (errors.Count > 0) return Results.ValidationProblem(errors, title: "Uma ou mais informações são inválidas.");
 
         var userId = UserId(http);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -63,8 +63,8 @@ public static class MonitorEndpoints
         await db.Users.FromSqlInterpolated($"SELECT * FROM \"AspNetUsers\" WHERE \"Id\" = {userId} FOR UPDATE")
             .AsNoTracking().SingleAsync(cancellationToken);
         if (await db.Monitors.CountAsync(m => m.UserId == userId, cancellationToken) >= MonitorRules.MaxPerUser)
-            return Results.Problem(statusCode: 409, title: "Monitor limit reached.",
-                detail: $"A user can have at most {MonitorRules.MaxPerUser} monitors.");
+            return Results.Problem(statusCode: 409, title: "Limite de monitoramentos atingido.",
+                detail: $"Você pode ter até {MonitorRules.MaxPerUser} monitoramentos.");
 
         var now = clock.GetUtcNow().UtcDateTime;
         var monitor = new Monitor
@@ -103,7 +103,7 @@ public static class MonitorEndpoints
     {
         var errors = MonitorRules.Validate(request.Name, request.Url, request.IntervalMinutes,
             request.ContentSelector, request.Keywords);
-        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        if (errors.Count > 0) return Results.ValidationProblem(errors, title: "Uma ou mais informações são inválidas.");
         var monitor = await OwnedMonitorAsync(db, UserId(http), id, cancellationToken);
         if (monitor is null) return NotFound();
 
@@ -137,8 +137,8 @@ public static class MonitorEndpoints
         if (request.Status is not ("active" or "paused"))
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["status"] = ["Status must be active or paused."]
-            });
+                ["status"] = ["O status deve ser ativo ou pausado."]
+            }, title: "Uma ou mais informações são inválidas.");
         var monitor = await OwnedMonitorAsync(db, UserId(http), id, cancellationToken);
         if (monitor is null) return NotFound();
         if (monitor.Status != request.Status)
@@ -175,7 +175,7 @@ public static class MonitorEndpoints
             m => m.Id == id && m.UserId == userId, cancellationToken);
 
     private static string UserId(HttpContext http) => http.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-    private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitor not found.");
+    private static IResult NotFound() => Results.Problem(statusCode: 404, title: "Monitoramento não encontrado.");
     private static MonitorResponse ToResponse(Monitor m, CheckSchedule schedule) => new(m.Id, m.Name, m.Url,
         m.IntervalMinutes, m.Status, schedule.NextCheckAt(m.NextCheckAt, m.IntervalMinutes), m.CreatedAt, m.UpdatedAt,
         null, m.ContentSelector, m.KeywordsJson, MonitorRules.ReadKeywords(m.KeywordsJson), m.EmailAlertsEnabled);
