@@ -68,6 +68,8 @@ public sealed class AuthEndpointTests(
         token = await GetCsrfTokenAsync(client);
         using var wrongPassword = await PostWithCsrfAsync(client, "/api/auth/login", new { email, password = "wrong" }, token);
         Assert.Equal(HttpStatusCode.Unauthorized, wrongPassword.StatusCode);
+        Assert.Equal("E-mail ou senha inválidos.",
+            (await wrongPassword.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
         using var unknownUser = await PostWithCsrfAsync(client, "/api/auth/login", new { email = UniqueEmail(), password = Password }, token);
         Assert.Equal(HttpStatusCode.Unauthorized, unknownUser.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
@@ -87,17 +89,39 @@ public sealed class AuthEndpointTests(
 
         using var invalidEmail = await PostWithCsrfAsync(client, "/api/auth/register", new { email = "bad-email", password = Password }, token);
         Assert.Equal(HttpStatusCode.BadRequest, invalidEmail.StatusCode);
+        Assert.Equal("Informe um e-mail válido com até 254 caracteres.",
+            (await invalidEmail.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("email")[0].GetString());
 
         var email = UniqueEmail();
         using var weakPassword = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = "weak" }, token);
         Assert.Equal(HttpStatusCode.BadRequest, weakPassword.StatusCode);
+        var passwordErrors = (await weakPassword.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("errors").GetProperty("password").EnumerateArray()
+            .Select(message => message.GetString()).ToArray();
+        Assert.Contains("A senha deve ter pelo menos 8 caracteres.", passwordErrors);
+        Assert.Contains("A senha deve conter pelo menos uma letra maiúscula.", passwordErrors);
+        Assert.Contains("A senha deve conter pelo menos um número.", passwordErrors);
+        Assert.Contains("A senha deve conter pelo menos um símbolo, como ! ou #.", passwordErrors);
 
-        using var registration = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = Password }, token);
+        using var noLowercase = await PostWithCsrfAsync(client, "/api/auth/register",
+            new { email, password = "ABCDEFG1!" }, token);
+        Assert.Contains("A senha deve conter pelo menos uma letra minúscula.",
+            (await noLowercase.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
+                .GetProperty("password").EnumerateArray().Select(message => message.GetString()));
+
+        using var missingPassword = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = "" }, token);
+        Assert.Equal("Informe uma senha.",
+            (await missingPassword.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("password")[0].GetString());
+
+        const string eightCharacterPassword = "Abcdef1!";
+        using var registration = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = eightCharacterPassword }, token);
         Assert.Equal(HttpStatusCode.Created, registration.StatusCode);
 
         token = await GetCsrfTokenAsync(client);
-        using var duplicate = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = Password }, token);
+        using var duplicate = await PostWithCsrfAsync(client, "/api/auth/register", new { email, password = eightCharacterPassword }, token);
         Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+        Assert.Equal("Este e-mail já está cadastrado.",
+            (await duplicate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("email")[0].GetString());
     }
 
     [PostgreSqlFact]

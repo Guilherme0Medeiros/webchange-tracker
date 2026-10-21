@@ -42,7 +42,7 @@ public static class AuthEndpoints
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["email"] = ["Enter a valid email address of at most 254 characters."]
+                ["email"] = ["Informe um e-mail válido com até 254 caracteres."]
             });
         }
 
@@ -50,7 +50,7 @@ public static class AuthEndpoints
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["password"] = ["Password is required."]
+                ["password"] = ["Informe uma senha."]
             });
         }
 
@@ -59,11 +59,12 @@ public static class AuthEndpoints
         if (!result.Succeeded)
         {
             var errors = result.Errors.ToArray();
-            var field = errors.Any(error => error.Code is "DuplicateEmail" or "DuplicateUserName")
+            var field = errors.Any(error => error.Code is "DuplicateEmail" or "DuplicateUserName" or "InvalidEmail" or "InvalidUserName")
                 ? "email" : "password";
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                [field] = errors.Select(error => error.Description).ToArray()
+                [field] = errors.Select(error => RegistrationErrorMessage(error.Code,
+                    users.Options.Password.RequiredLength)).ToArray()
             });
         }
 
@@ -78,19 +79,19 @@ public static class AuthEndpoints
     {
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrEmpty(request.Password))
         {
-            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Email and password are required.");
+            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "Informe e-mail e senha.");
         }
 
         var user = await users.FindByEmailAsync(request.Email.Trim());
         if (user is null)
         {
-            return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Invalid credentials.");
+            return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "E-mail ou senha inválidos.");
         }
 
         var result = await signInManager.PasswordSignInAsync(user, request.Password, isPersistent: false, lockoutOnFailure: true);
         if (!result.Succeeded)
         {
-            return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Invalid credentials.");
+            return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "E-mail ou senha inválidos.");
         }
 
         return Results.Ok(new UserResponse(user.Id, user.Email!));
@@ -109,6 +110,19 @@ public static class AuthEndpoints
             ? Results.Unauthorized()
             : Results.Ok(new UserResponse(user.Id, user.Email!));
     }
+
+    private static string RegistrationErrorMessage(string code, int minimumLength) => code switch
+    {
+        "PasswordTooShort" => $"A senha deve ter pelo menos {minimumLength} caracteres.",
+        "PasswordRequiresDigit" => "A senha deve conter pelo menos um número.",
+        "PasswordRequiresLower" => "A senha deve conter pelo menos uma letra minúscula.",
+        "PasswordRequiresUpper" => "A senha deve conter pelo menos uma letra maiúscula.",
+        "PasswordRequiresNonAlphanumeric" => "A senha deve conter pelo menos um símbolo, como ! ou #.",
+        "PasswordRequiresUniqueChars" => "A senha deve conter mais caracteres diferentes.",
+        "DuplicateEmail" or "DuplicateUserName" => "Este e-mail já está cadastrado.",
+        "InvalidEmail" or "InvalidUserName" => "Informe um e-mail válido.",
+        _ => "Não foi possível criar a conta. Verifique os dados e tente novamente."
+    };
 
     public sealed record RegisterRequest(string? Email, string? Password);
     public sealed record LoginRequest(string? Email, string? Password);
