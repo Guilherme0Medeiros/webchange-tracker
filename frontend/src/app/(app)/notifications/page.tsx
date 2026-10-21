@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, Loading, Pagination } from "@/components/feedback";
 import { RefreshButton } from "@/components/refresh-button";
-import { mutate, query, type EmailStatus, type Notification, type Page } from "@/lib/api";
+import { userError, mutate, query, type EmailStatus, type Notification, type Page } from "@/lib/api";
 import { invalidatePaths, useRadarQuery } from "@/lib/radar-query";
 import { dateTime } from "@/lib/utils";
 
@@ -25,7 +25,7 @@ export default function NotificationsPage() {
   async function markRead(id: string) {
     setBusyId(id); setActionError("");
     try { await mutate(`/notifications/${id}/read`, "PATCH"); await invalidatePaths(revalidate, ["/notifications"]); }
-    catch (cause) { setActionError(cause instanceof Error ? cause.message : "Não foi possível marcar como lida."); }
+    catch (cause) { setActionError(userError(cause, "Não foi possível marcar como lida.")); }
     finally { setBusyId(""); }
   }
   return <>

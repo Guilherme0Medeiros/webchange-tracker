@@ -10,14 +10,28 @@ import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, Loading, Pagination } from "@/components/feedback";
 import { RefreshButton } from "@/components/refresh-button";
 import { MonitorSchedule } from "@/components/monitor-schedule";
-import { mutate, query, type Change, type Check, type Monitor, type Page } from "@/lib/api";
+import { userError, mutate, query, type Change, type Check, type Monitor, type Page } from "@/lib/api";
 import { invalidatePaths, useRadarQuery } from "@/lib/radar-query";
 import { dateTime } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
-const errorLabel = (code: string) => code === "selector_no_match"
-  ? "O seletor CSS não encontrou elementos na página."
-  : code.replaceAll("_", " ");
+const errorLabels: Record<string, string> = {
+  selector_no_match: "O seletor CSS não encontrou elementos na página.",
+  unsafe_destination: "A URL não aponta para um endereço público permitido.",
+  dns_error: "Não foi possível localizar o endereço da página.",
+  connection_error: "Não foi possível conectar à página.",
+  timeout: "A página demorou demais para responder.",
+  http_error: "A página retornou uma resposta de erro.",
+  fetch_error: "Não foi possível verificar a página agora.",
+  invalid_url: "A URL do monitoramento é inválida.",
+  too_many_redirects: "A página redirecionou muitas vezes.",
+  invalid_redirect: "A página retornou um redirecionamento inválido.",
+  unsafe_redirect: "A página redirecionou para um endereço não permitido.",
+  invalid_content_type: "A página não retornou conteúdo HTML.",
+  response_too_large: "A página excede o tamanho permitido para verificação.",
+  invalid_charset: "Não foi possível ler a codificação da página.",
+};
+const errorLabel = (code: string) => errorLabels[code] ?? "Não foi possível verificar a página agora.";
 export default function MonitorPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -60,7 +74,7 @@ export default function MonitorPage() {
         setNotice(updated.status === "active" ? "Monitoramento reativado." : "Monitoramento pausado.");
       }
       await invalidatePaths(revalidate, kind === "check" ? ["/dashboard", `/monitors/${id}`, `/monitors/${id}/checks`, `/monitors/${id}/changes`] : ["/dashboard", "/monitors", `/monitors/${id}`]);
-    } catch (cause) { setActionError(cause instanceof Error ? cause.message : "A ação não pôde ser concluída."); }
+    } catch (cause) { setActionError(userError(cause, "A ação não pôde ser concluída.")); }
     finally { setBusy(false); }
   }
 

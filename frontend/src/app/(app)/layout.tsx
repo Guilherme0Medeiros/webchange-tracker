@@ -7,7 +7,7 @@ import { SWRConfig } from "swr";
 import { Bell, LayoutDashboard, LogOut, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorState, Loading } from "@/components/feedback";
-import { get, mutate, type User } from "@/lib/api";
+import { userError, get, mutate, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -21,14 +21,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     get<User>("/auth/me").then(value => { if (live) setUser(value); }).catch(cause => {
       if (!live) return;
       if (cause.status === 401) router.replace("/login");
-      else setError(cause instanceof Error ? cause.message : "Não foi possível verificar a sessão.");
+      else setError(userError(cause, "Não foi possível verificar a sessão."));
     });
     return () => { live = false; };
   }, [router]);
   async function logout() {
     setBusy(true); setError("");
     try { await mutate<void>("/auth/logout", "POST"); router.replace("/login"); router.refresh(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível sair."); setBusy(false); }
+    catch (cause) { setError(userError(cause, "Não foi possível sair.")); setBusy(false); }
   }
   if (error && !user) return <main className="mx-auto max-w-lg p-6"><ErrorState message={error} retry={() => window.location.reload()} /></main>;
   if (!user) return <main className="mx-auto max-w-lg p-6"><Loading /></main>;

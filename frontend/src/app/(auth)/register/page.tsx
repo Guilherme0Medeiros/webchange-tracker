@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Radar } from "lucide-react";
-import { mutate, type User } from "@/lib/api";
+import { userError, mutate, type User } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ export default function RegisterPage() {
       router.replace("/dashboard");
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível criar a conta.");
+      setError(userError(cause, "Não foi possível criar a conta."));
     } finally {
       setBusy(false);
     }

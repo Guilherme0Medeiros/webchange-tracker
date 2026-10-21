@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSWRConfig } from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { mutate, type EmailStatus, type Monitor, type MonitorInput } from "@/lib/api";
+import { userError, mutate, type EmailStatus, type Monitor, type MonitorInput } from "@/lib/api";
 import { invalidatePaths, useRadarQuery } from "@/lib/radar-query";
 
 export function MonitorForm({ monitor }: { monitor?: Monitor }) {
@@ -31,7 +31,7 @@ export function MonitorForm({ monitor }: { monitor?: Monitor }) {
       const saved = await mutate<Monitor>(monitor ? `/monitors/${monitor.id}` : "/monitors", monitor ? "PUT" : "POST", input);
       await invalidatePaths(revalidate, ["/dashboard", "/monitors", ...(monitor ? [`/monitors/${monitor.id}`] : [])]);
       router.push(`/monitors/${saved.id}`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível salvar o monitoramento."); }
+    } catch (cause) { setError(userError(cause, "Não foi possível salvar o monitoramento.")); }
     finally { setBusy(false); }
   }
   return <form className="max-w-xl space-y-5" onSubmit={submit}>
@@ -42,7 +42,7 @@ export function MonitorForm({ monitor }: { monitor?: Monitor }) {
     <label className="block text-sm font-medium">Palavras-chave para alertas (opcional)<textarea className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={keywords} onChange={event => setKeywords(event.target.value)} placeholder="Uma expressão por linha, até 10" /><span className="mt-1 block text-xs text-slate-500">A mudança fica no histórico mesmo quando nenhuma palavra corresponde.</span></label>
     <div className="space-y-2 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={emailAlertsEnabled} onChange={event => setEmailAlertsEnabled(event.target.checked)} /> Alertas por e-mail</label>
       {emailStatus.data && !emailStatus.data.available && <p className="text-slate-500">Canal de e-mail indisponível: configure o SMTP para enviar alertas.</p>}
-      {emailStatus.data?.available && !emailStatus.data.confirmed && <div><p className="text-slate-500">Confirme o e-mail da conta antes de receber alertas.</p><Button type="button" variant="outline" onClick={async () => { try { await mutate<void>("/notifications/request-email-confirmation", "POST"); setConfirmationSent(true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao solicitar confirmação."); } }}>{confirmationSent ? "Mensagem solicitada" : "Enviar confirmação"}</Button></div>}
+      {emailStatus.data?.available && !emailStatus.data.confirmed && <div><p className="text-slate-500">Confirme o e-mail da conta antes de receber alertas.</p><Button type="button" variant="outline" onClick={async () => { try { await mutate<void>("/notifications/request-email-confirmation", "POST"); setConfirmationSent(true); } catch (cause) { setError(userError(cause, "Falha ao solicitar confirmação.")); } }}>{confirmationSent ? "Mensagem solicitada" : "Enviar confirmação"}</Button></div>}
     </div>
     {monitor && <p className="text-sm text-slate-500">Alterar a URL ou o seletor inicia uma nova linha de base. O histórico anterior permanece disponível.</p>}
     {error && <p className="text-sm text-red-700" role="alert">{error}</p>}

@@ -10,21 +10,49 @@ export type ChangeDetail = { id: string; monitorId: string; detectedAt: string; 
 export type Notification = { id: string; changeEventId: string; monitorId: string; createdAt: string; readAt: string | null };
 
 type Problem = { title?: string; detail?: string; errors?: Record<string, string[]> };
+const unexpectedError = "Não foi possível concluir a solicitação. Tente novamente mais tarde.";
+
+function friendlyError(status: number, problem: Problem): string {
+  if (status >= 500 && status !== 503) return unexpectedError;
+  const validation = problem.errors && Object.values(problem.errors)
+    .filter(Array.isArray).flat().filter((message): message is string => typeof message === "string").join(" ");
+  const message = validation || problem.detail || problem.title;
+  if (typeof message === "string" && message.trim()) return message;
+  if (status === 401) return "Entre na sua conta para continuar.";
+  if (status === 403) return "Você não tem permissão para acessar este recurso.";
+  if (status === 404) return "Recurso não encontrado.";
+  if (status === 429) return "Muitas solicitações. Aguarde e tente novamente.";
+  return unexpectedError;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
+export const userError = (cause: unknown, fallback = unexpectedError) =>
+  cause instanceof ApiError ? cause.message : fallback;
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, { ...init, credentials: "same-origin", cache: "no-store", headers: { ...init.headers } });
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, { ...init, credentials: "same-origin", cache: "no-store", headers: { ...init.headers } });
+  } catch (cause) {
+    console.error("API network request failed", cause);
+    throw new ApiError(0, "Não foi possível conectar ao serviço. Verifique sua conexão e tente novamente.");
+  }
   if (!response.ok) {
-    const problem = await response.json().catch(() => ({})) as Problem;
-    const validation = problem.errors && Object.values(problem.errors).flat().join(" ");
-    throw new ApiError(response.status, validation || problem.detail || problem.title || `Erro HTTP ${response.status}`);
+    const isProblem = response.headers.get("Content-Type")?.toLowerCase().includes("application/problem+json");
+    const parsed = isProblem ? await response.json().catch(() => null) : null;
+    const problem: Problem = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    throw new ApiError(response.status, friendlyError(response.status, problem));
   }
   if (response.status === 204) return undefined as T;
   const body = await response.text();
-  return body ? JSON.parse(body) as T : undefined as T;
+  try {
+    return body ? JSON.parse(body) as T : undefined as T;
+  } catch (cause) {
+    console.error("API returned invalid JSON", cause);
+    throw new ApiError(response.status, unexpectedError);
+  }
 }
 
 export const get = <T>(path: string) => request<T>(path);
