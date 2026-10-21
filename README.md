@@ -1,5 +1,7 @@
 # WebChange Radar
 
+[![CI](https://github.com/Guilherme0Medeiros/webchange-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/Guilherme0Medeiros/webchange-tracker/actions/workflows/ci.yml)
+
 Aplicação para acompanhar alterações no texto de páginas públicas, com histórico, comparação e alertas internos ou por e-mail. Usa ASP.NET Core em .NET 10, PostgreSQL, Entity Framework Core e Next.js. O escopo atual está em [docs/V1.md](docs/V1.md); [docs/MVP.md](docs/MVP.md) registra as decisões do MVP.
 
 ## Estrutura
@@ -109,7 +111,28 @@ Para SMTP real, defina `Email__Mode=Smtp`, `Email__Host`, `Email__Port`, `Email_
 
 ## Validação e publicação
 
-Os testes do backend usam fakes de rede, diretórios temporários para e-mail File e esquemas isolados no PostgreSQL de teste. Configure `WEBCHANGE_TEST_CONNECTION` para um banco diferente do desenvolvimento e execute `dotnet test WebChangeRadar.slnx`. Se a API local estiver em execução no Windows e bloquear os arquivos de saída padrão, use `dotnet test WebChangeRadar.slnx --no-restore -p:OutputPath=bin/Audit/ -p:UseAppHost=false`. Os testes integrados cobrem seleção, palavras-chave, confirmação, envio File, falhas e concorrência da fila; o transporte SMTP real não é exercitado. No frontend, execute `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd test` e `npm.cmd run build` no PowerShell. Há workflows para backend e frontend, mas a execução remota do CI precisa ser verificada no GitHub após push autorizado.
+### Integração contínua
+
+O workflow [CI](.github/workflows/ci.yml) roda em pushes para `main` e pull requests destinados a `main`. Os jobs **Backend (.NET 10)** e **Frontend (Node 22)** aparecem separadamente na aba **Actions** do GitHub. Abra uma execução e o job desejado para ver os logs, a quantidade de testes, a duração e os nomes dos testes que falharam. Os artefatos `backend-test-results` (TRX) e `frontend-test-results` (JUnit XML) ficam na seção **Artifacts** da execução, inclusive quando um teste falha. O CI remoto ainda precisa ser confirmado após o primeiro push.
+
+O backend usa fakes de rede e e-mail, diretórios temporários para o modo File e um PostgreSQL temporário com banco `webchange_test`. Cada classe de testes de integração cria e remove um esquema isolado; migrations são aplicadas nesse esquema. A conexão `WEBCHANGE_TEST_CONNECTION` vem do ambiente no CI e pode vir do `.env` localmente; se estiver ausente, os testes de integração falham em vez de serem ignorados. Para executar os mesmos comandos localmente, configure essa conexão para um banco **diferente** do desenvolvimento. Na raiz do repositório:
+
+```powershell
+dotnet restore WebChangeRadar.slnx
+dotnet build WebChangeRadar.slnx --configuration Release --no-restore
+dotnet test backend/tests/WebChangeRadar.UnitTests/WebChangeRadar.UnitTests.csproj --configuration Release --no-build
+dotnet test backend/tests/WebChangeRadar.IntegrationTests/WebChangeRadar.IntegrationTests.csproj --configuration Release --no-build
+```
+
+Se a API local em execução bloquear arquivos de saída no Windows, use `dotnet test WebChangeRadar.slnx --no-restore -p:OutputPath=bin/Audit/ -p:UseAppHost=false`. O transporte SMTP real e sites públicos não são exercitados pelos testes. No diretório `frontend`, execute:
+
+```powershell
+npm.cmd ci
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run build
+```
 
 Para validação manual, use uma página HTML pública de teste sob seu controle: crie o monitor com seletor `main` e palavra-chave `lançamento`; rode a primeira checagem, altere apenas um `aside` e confirme que não há mudança; altere o texto de `main` sem o termo e confirme histórico sem alerta; altere `main` incluindo o termo e confirme alerta. A lista e as notificações devem se atualizar em até cerca de 30 segundos com a aba visível ou ao clicar **Atualizar**. Um monitor vencido exibe **aguardando verificação** até a conclusão real. O scheduler local continua sendo único, a cada minuto, e respeita a frequência de cada monitor. Em 30 dias, um job externo por minuto representa aproximadamente 43.200 invocações para todos os usuários juntos; as coletas HTTP são consumo adicional.
 
