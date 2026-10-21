@@ -19,6 +19,38 @@ public sealed class MonitorEndpointTests(PostgreSqlFixture database, WebApplicat
     private const string Password = "SecurePassword123!";
 
     [PostgreSqlFact]
+    public async Task ConcurrentCreationsRespectPerUserLimit()
+    {
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        await RegisterAsync(client);
+        var csrf = await client.GetFromJsonAsync<JsonElement>("/api/auth/csrf");
+        var token = csrf.GetProperty("requestToken").GetString()!;
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(async index =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/monitors")
+            {
+                Content = JsonContent.Create(new { name = $"Concurrent {index}",
+                    url = $"https://example.org/{index}", intervalMinutes = 60 })
+            };
+            request.Headers.Add("X-CSRF-TOKEN", token);
+            return await client.SendAsync(request);
+        }));
+        try
+        {
+            Assert.Equal(3, responses.Count(response => response.StatusCode == HttpStatusCode.Created));
+            Assert.Equal(2, responses.Count(response => response.StatusCode == HttpStatusCode.Conflict));
+            var list = await client.GetFromJsonAsync<JsonElement>("/api/monitors");
+            Assert.Equal(3, list.GetProperty("totalCount").GetInt32());
+        }
+        finally
+        {
+            foreach (var response in responses) response.Dispose();
+        }
+    }
+
+    [PostgreSqlFact]
     public async Task CrudStatusLimitAndPaging()
     {
         using var factory = CreateFactory();

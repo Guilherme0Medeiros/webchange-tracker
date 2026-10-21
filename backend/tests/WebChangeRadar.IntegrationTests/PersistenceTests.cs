@@ -12,7 +12,8 @@ public sealed class PersistenceTests(PostgreSqlFixture database) : IClassFixture
     {
         await using var context = database.CreateContext();
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
-        Assert.Equal(5, (await context.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.Contains(await context.Database.GetAppliedMigrationsAsync(),
+            migration => migration.EndsWith("_AddEmailOutbox", StringComparison.Ordinal));
 
         var user = new ApplicationUser { UserName = "owner@example.test", Email = "owner@example.test" };
         context.Users.Add(user);

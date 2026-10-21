@@ -26,9 +26,9 @@ public sealed class PostgreSqlFixture : IAsyncLifetime
         if (!string.IsNullOrWhiteSpace(developmentConnection))
         {
             var development = new NpgsqlConnectionStringBuilder(developmentConnection);
-            if (string.Equals(builder.Host, development.Host, StringComparison.OrdinalIgnoreCase) &&
-                builder.Port == development.Port &&
-                string.Equals(builder.Database, development.Database, StringComparison.OrdinalIgnoreCase))
+            // Different host spellings (for example localhost and 127.0.0.1) may
+            // still point at the same database. Require a distinct database name.
+            if (string.Equals(builder.Database, development.Database, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Test and development connections must use different databases.");
         }
 
